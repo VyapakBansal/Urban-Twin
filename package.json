@@ -1,0 +1,17 @@
+{
+  "name": "urban-twin",
+  "private": true,
+  "version": "0.5.0",
+  "description": "Kensington neighbourhood digital twin — one-command local stack",
+  "scripts": {
+    "up": "bash scripts/up.sh",
+    "down": "bash scripts/down.sh",
+    "down:all": "bash scripts/down.sh --docker",
+    "dev": "bash scripts/up.sh --with-frontend",
+    "train": ".venv/Scripts/python.exe -m urban_twin.forecast.train",
+    "validate": ".venv/Scripts/python.exe -m urban_twin.forecast.main --validate",
+    "ingest": ".venv/Scripts/python.exe -m urban_twin.ingestion.main --once",
+    "forecast": ".venv/Scripts/python.exe -m urban_twin.forecast.main --once",
+    "frontend": "npm --prefix frontend run dev"
+  }
+}

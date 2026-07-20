@@ -1,8 +1,0 @@
-# Placeholder — Azure Terraform (Week 4)
-
-Do **not** apply cloud resources until the local Docker pipeline is reliable.
-
-Target provider: `azurerm`  
-Budget: preserve ~$100 Azure credits — `plan` freely, `apply` rarely, `destroy` after demos.
-
-See README “Cloud plan (Azure — spend carefully)”.

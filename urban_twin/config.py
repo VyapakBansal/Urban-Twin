@@ -31,11 +31,24 @@ class Settings(BaseSettings):
     api_host: str = "127.0.0.1"
     api_port: int = 8000
     api_rate_limit: str = "60/minute"
+    # Comma-separated browser origins (Azure nginx same-origin can list the public http://IP)
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 
-    forecast_horizon_hours: int = 1
+    ws_bridge_host: str = "127.0.0.1"
+    ws_bridge_port: int = 8001
+
+    forecast_horizon_hours: int = 24
     forecast_interval_sec: int = 900
-    forecast_model_version: str = "persistence-v1"
+    forecast_model_version: str = "gbr-24h-v1"
     forecast_reading_type: str = "temp"
+    forecast_targets: str = "temp,river_level"
+    forecast_train_days: int = 730
+    forecast_model_dir: str = "models"
+
+    # Multi-source feeds
+    openaq_api_key: str = ""
+    river_station_id: str = "05BH004"
+    ingest_sources: str = "weather,river,air,incidents,pathways,amenities"
 
     @property
     def aoi_bbox(self) -> tuple[float, float, float, float]:
@@ -46,6 +59,18 @@ class Settings(BaseSettings):
             self.aoi_max_lon,
             self.aoi_max_lat,
         )
+
+    @property
+    def ingest_source_list(self) -> list[str]:
+        return [s.strip() for s in self.ingest_sources.split(",") if s.strip()]
+
+    @property
+    def forecast_target_list(self) -> list[str]:
+        return [s.strip() for s in self.forecast_targets.split(",") if s.strip()]
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [s.strip() for s in self.cors_origins.split(",") if s.strip()]
 
 
 settings = Settings()

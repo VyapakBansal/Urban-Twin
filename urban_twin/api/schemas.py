@@ -15,12 +15,47 @@ class BuildingOut(BaseModel):
 class ReadingOut(BaseModel):
     id: int
     station_id: str
+    source: str = "weather"
     reading_type: str
     value: float
     unit: str
     recorded_at: datetime
     lon: float
     lat: float
+
+
+class PathwayOut(BaseModel):
+    id: int
+    name: str | None
+    source: str
+    geojson: dict
+
+
+class AmenityOut(BaseModel):
+    id: int
+    name: str | None
+    amenity_type: str
+    source: str
+    lon: float
+    lat: float
+
+
+class IncidentOut(BaseModel):
+    id: int
+    external_id: str
+    description: str | None
+    started_at: datetime | None
+    source: str
+    lon: float
+    lat: float
+
+
+class LayerCountsOut(BaseModel):
+    buildings: int
+    pathways: int
+    amenities: int
+    incidents: int
+    readings: int
 
 
 class ForecastOut(BaseModel):

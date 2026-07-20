@@ -1,0 +1,21 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+# Keep enable_demo_vm = false until you intentionally spend credits.
+
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+location     = "canadacentral"
+project_name = "urbantwin"
+environment  = "demo"
+
+# Soft cap for alerts — adjust to protect your ~$100 credits
+monthly_budget_amount = 40
+budget_contact_emails = ["you@example.com"]
+
+# COST SWITCH — leave false for terraform plan learning
+enable_demo_vm = false
+
+# Required only when enable_demo_vm = true
+admin_username  = "urbanadmin"
+ssh_public_key  = ""
+# Restrict SSH to your IP before apply, e.g. "203.0.113.10/32"
+allowed_ssh_cidr = "0.0.0.0/0"

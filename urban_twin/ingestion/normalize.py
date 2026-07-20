@@ -14,6 +14,7 @@ class NormalizedReading(BaseModel):
     value: float
     unit: str
     recorded_at: datetime
+    source: str = "weather"
 
     @field_validator("recorded_at")
     @classmethod
@@ -83,6 +84,7 @@ def normalize_openweather_current(
                 value=value,
                 unit=unit,
                 recorded_at=recorded_at,
+                source="weather",
             )
         )
 

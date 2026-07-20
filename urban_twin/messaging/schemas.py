@@ -13,10 +13,11 @@ class ReadingEvent(BaseModel):
     station_id: str
     lon: float
     lat: float
-    reading_type: ReadingType
+    reading_type: ReadingType | str
     value: float
     unit: str
     recorded_at: datetime
+    source: str = "weather"
     reading_id: int | None = Field(
         default=None,
         description="PostGIS sensor_readings.id after persist",

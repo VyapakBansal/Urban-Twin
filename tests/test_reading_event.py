@@ -15,6 +15,7 @@ def test_reading_event_roundtrip_json():
         value=20.34,
         unit="C",
         recorded_at=datetime(2026, 7, 20, 18, 0, tzinfo=timezone.utc),
+        source="weather",
         reading_id=42,
     )
     payload = event.model_dump(mode="json")
@@ -22,3 +23,4 @@ def test_reading_event_roundtrip_json():
     assert restored.reading_type == ReadingType.TEMP
     assert restored.reading_id == 42
     assert restored.value == 20.34
+    assert restored.source == "weather"

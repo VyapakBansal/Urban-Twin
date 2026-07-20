@@ -1,4 +1,4 @@
-"""Forecast worker: read history → baseline model → PostGIS + Kafka."""
+"""Forecast worker: load trained 24h models (or baselines) → PostGIS + Kafka."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from sqlalchemy import select
 from urban_twin.config import settings
 from urban_twin.db.models import Forecast, SensorReading
 from urban_twin.db.session import AsyncSessionLocal
+from urban_twin.forecast.gbr import load_bundle
+from urban_twin.forecast.history import fetch_ec_river_levels, fetch_open_meteo_temps
 from urban_twin.forecast.models import (
     moving_average_forecast,
     persistence_forecast,
@@ -23,6 +25,19 @@ from urban_twin.forecast.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _station_for(reading_type: str) -> str:
+    if reading_type == "river_level":
+        return f"bow-{settings.river_station_id}"
+    return settings.station_id
+
+
+def _coords_for(reading_type: str) -> tuple[float, float]:
+    # Bow gauge is slightly SE of Kensington AOI centroid — close enough for map
+    if reading_type == "river_level":
+        return settings.station_lon + 0.008, settings.station_lat - 0.004
+    return settings.station_lon, settings.station_lat
 
 
 async def _load_series(
@@ -40,6 +55,34 @@ async def _load_series(
     values = [float(r.value) for r in rows]
     times = [r.recorded_at for r in rows]
     return values, times
+
+
+async def _series_for_gbr(
+    reading_type: str,
+    live_values: list[float],
+    live_times: list,
+) -> tuple[list[float], list]:
+    """Merge recent archive context with live points so lag features are available."""
+    if reading_type == "temp":
+        hist_v, hist_t = await fetch_open_meteo_temps(days=60)
+    elif reading_type == "river_level":
+        hist_v, hist_t = await fetch_ec_river_levels(days=120)
+    else:
+        return live_values, live_times
+
+    by_hour: dict = {}
+    for v, t in zip(hist_v, hist_t, strict=True):
+        key = t.replace(minute=0, second=0, microsecond=0)
+        by_hour[key] = float(v)
+    for v, t in zip(live_values, live_times, strict=True):
+        if t.tzinfo is None:
+            from datetime import timezone
+
+            t = t.replace(tzinfo=timezone.utc)
+        key = t.replace(minute=0, second=0, microsecond=0)
+        by_hour[key] = float(v)
+    ordered = sorted(by_hour.items(), key=lambda x: x[0])
+    return [v for _, v in ordered], [t for t, _ in ordered]
 
 
 async def _publish_forecast_event(payload: dict) -> None:
@@ -65,23 +108,51 @@ async def generate_once(
     station_id: str | None = None,
     reading_type: str | None = None,
     publish: bool = True,
-    model: str = "persistence",
+    model: str = "gbr",
 ) -> Forecast | None:
-    station_id = station_id or settings.station_id
     reading_type = reading_type or settings.forecast_reading_type
+    station_id = station_id or _station_for(reading_type)
     horizon = timedelta(hours=settings.forecast_horizon_hours)
+    lon, lat = _coords_for(reading_type)
 
-    values, times = await _load_series(station_id, reading_type)
-    if not values:
+    live_values, live_times = await _load_series(station_id, reading_type)
+    if not live_values and model != "gbr":
         logger.warning("no readings for %s/%s — skip forecast", station_id, reading_type)
         return None
 
-    if model == "moving_avg":
-        result = moving_average_forecast(values, times, horizon=horizon)
+    result = None
+    if model == "gbr":
+        bundle = load_bundle(reading_type, settings.forecast_horizon_hours)
+        if bundle is None:
+            logger.warning(
+                "no trained model for %s — run: python -m urban_twin.forecast.train",
+                reading_type,
+            )
+            return None
+        # Live polls are sparse early on — pad with recent archive so lag features work
+        values, times = await _series_for_gbr(reading_type, live_values, live_times)
+        result = bundle.predict_next(values, times)
+        if result is None:
+            logger.warning(
+                "%s: still too few points for GBR; using persistence",
+                reading_type,
+            )
+            fallback_v = live_values or values
+            fallback_t = live_times or times
+            if not fallback_v:
+                return None
+            result = persistence_forecast(
+                fallback_v,
+                fallback_t,
+                horizon=horizon,
+                model_version=f"{bundle.model_version}+persistence-fallback",
+            )
+    elif model == "moving_avg":
+        result = moving_average_forecast(live_values, live_times, horizon=horizon)
     else:
         result = persistence_forecast(
-            values,
-            times,
+            live_values,
+            live_times,
             horizon=horizon,
             model_version=settings.forecast_model_version,
         )
@@ -89,10 +160,7 @@ async def generate_once(
     async with AsyncSessionLocal() as session:
         row = Forecast(
             station_id=station_id,
-            geometry=WKTElement(
-                f"POINT({settings.station_lon} {settings.station_lat})",
-                srid=4326,
-            ),
+            geometry=WKTElement(f"POINT({lon} {lat})", srid=4326),
             reading_type=reading_type,
             predicted_value=result.predicted_value,
             target_time=result.target_time,
@@ -120,12 +188,29 @@ async def generate_once(
                 "target_time": result.target_time,
                 "model_version": result.model_version,
                 "forecast_id": row.id,
-                "lon": settings.station_lon,
-                "lat": settings.station_lat,
+                "lon": lon,
+                "lat": lat,
             }
         )
 
     return row
+
+
+async def generate_all(
+    *,
+    publish: bool = True,
+    model: str = "gbr",
+) -> list[Forecast]:
+    rows: list[Forecast] = []
+    for target in settings.forecast_target_list:
+        row = await generate_once(
+            reading_type=target,
+            publish=publish,
+            model=model,
+        )
+        if row is not None:
+            rows.append(row)
+    return rows
 
 
 async def validate_models(
@@ -133,33 +218,51 @@ async def validate_models(
     station_id: str | None = None,
     reading_type: str | None = None,
 ) -> None:
-    station_id = station_id or settings.station_id
-    reading_type = reading_type or settings.forecast_reading_type
-    values, _ = await _load_series(station_id, reading_type)
+    targets = (
+        [reading_type]
+        if reading_type
+        else settings.forecast_target_list
+    )
+    for rt in targets:
+        sid = station_id or _station_for(rt)
+        values, _ = await _load_series(sid, rt)
+        print(f"\nstation={sid} reading_type={rt} n_obs={len(values)}")
 
-    p = walk_forward_persistence_metrics(values)
-    m = walk_forward_moving_avg_metrics(values)
+        bundle = load_bundle(rt, settings.forecast_horizon_hours)
+        if bundle:
+            print(
+                f"  {bundle.model_version}  "
+                f"val n={bundle.n_val}  MAE={bundle.val_mae:.4f}  "
+                f"RMSE={bundle.val_rmse:.4f}  "
+                f"(trained offline; n_train={bundle.n_train})"
+            )
+        else:
+            print("  gbr model not found — run urban_twin.forecast.train")
 
-    if p is None:
-        print(
-            f"Not enough {reading_type} points for walk-forward validation "
-            f"(have {len(values)}; need ≥4). Keep ingesting and retry."
-        )
-        return
-
-    print(f"station={station_id} reading_type={reading_type} n_obs={len(values)}")
-    print(f"  persistence-v1  n={p.n_samples}  MAE={p.mae:.4f}  RMSE={p.rmse:.4f}")
-    if m:
-        print(f"  moving-avg-v1   n={m.n_samples}  MAE={m.mae:.4f}  RMSE={m.rmse:.4f}")
-    else:
-        print("  moving-avg-v1   insufficient history (need ≥6 points)")
+        p = walk_forward_persistence_metrics(values)
+        m = walk_forward_moving_avg_metrics(values)
+        if p:
+            print(f"  persistence-v1  n={p.n_samples}  MAE={p.mae:.4f}  RMSE={p.rmse:.4f}")
+        else:
+            print(
+                f"  persistence-v1  not enough live points "
+                f"(have {len(values)}; need >=4)"
+            )
+        if m:
+            print(f"  moving-avg-v1   n={m.n_samples}  MAE={m.mae:.4f}  RMSE={m.rmse:.4f}")
 
 
 async def run_loop(interval_sec: int, model: str) -> None:
-    logger.info("forecast loop every %ss model=%s", interval_sec, model)
+    logger.info(
+        "forecast loop every %ss model=%s targets=%s horizon=%sh",
+        interval_sec,
+        model,
+        settings.forecast_target_list,
+        settings.forecast_horizon_hours,
+    )
     while True:
         try:
-            await generate_once(model=model)
+            await generate_all(model=model)
         except Exception:
             logger.exception("forecast cycle failed")
         await asyncio.sleep(interval_sec)
@@ -167,17 +270,22 @@ async def run_loop(interval_sec: int, model: str) -> None:
 
 def cli() -> None:
     parser = argparse.ArgumentParser(description="Urban Twin forecast worker")
-    parser.add_argument("--once", action="store_true", help="Generate one forecast and exit")
+    parser.add_argument("--once", action="store_true", help="Generate forecasts and exit")
     parser.add_argument(
         "--validate",
         action="store_true",
-        help="Walk-forward MAE/RMSE on stored readings (time-ordered)",
+        help="Show trained-model val metrics + live walk-forward baselines",
     )
     parser.add_argument(
         "--model",
-        choices=("persistence", "moving_avg"),
-        default="persistence",
-        help="Baseline model to run",
+        choices=("gbr", "persistence", "moving_avg"),
+        default="gbr",
+        help="Model to run (default: trained HistGBR)",
+    )
+    parser.add_argument(
+        "--reading-type",
+        default=None,
+        help="Single target (default: all FORECAST_TARGETS)",
     )
     parser.add_argument("--no-kafka", action="store_true")
     parser.add_argument(
@@ -193,20 +301,37 @@ def cli() -> None:
     )
 
     if args.validate:
-        asyncio.run(validate_models())
+        asyncio.run(validate_models(reading_type=args.reading_type))
         sys.exit(0)
 
     if args.once:
-        row = asyncio.run(
-            generate_once(publish=not args.no_kafka, model=args.model)
-        )
-        if row is None:
-            print("No forecast generated (no readings?)")
+        if args.reading_type:
+            rows = [
+                asyncio.run(
+                    generate_once(
+                        reading_type=args.reading_type,
+                        publish=not args.no_kafka,
+                        model=args.model,
+                    )
+                )
+            ]
+            rows = [r for r in rows if r is not None]
+        else:
+            rows = asyncio.run(
+                generate_all(publish=not args.no_kafka, model=args.model)
+            )
+        if not rows:
+            print(
+                "No forecasts generated. Train models first:\n"
+                "  .venv/Scripts/python.exe -m urban_twin.forecast.train\n"
+                "And ensure live readings exist for temp / river_level."
+            )
             sys.exit(1)
-        print(
-            f"Forecast id={row.id} {row.reading_type}={row.predicted_value} "
-            f"target={row.target_time.isoformat()} model={row.model_version}"
-        )
+        for row in rows:
+            print(
+                f"Forecast id={row.id} {row.reading_type}={row.predicted_value:.4f} "
+                f"target={row.target_time.isoformat()} model={row.model_version}"
+            )
         sys.exit(0)
 
     asyncio.run(run_loop(args.interval, args.model))

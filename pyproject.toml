@@ -19,6 +19,8 @@ dependencies = [
   "aiokafka>=0.12.0",
   "slowapi>=0.1.9",
   "numpy>=2.0.0",
+  "scikit-learn>=1.5.0",
+  "joblib>=1.4.0",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +35,7 @@ urban-ingest = "urban_twin.ingestion.main:cli"
 urban-api = "urban_twin.api.main:cli"
 urban-ws = "urban_twin.websocket_bridge.main:cli"
 urban-forecast = "urban_twin.forecast.main:cli"
+urban-train = "urban_twin.forecast.train:cli"
 
 [build-system]
 requires = ["setuptools>=75.0"]

@@ -13,6 +13,7 @@ async def write_readings(
     for r in readings:
         row = SensorReading(
             station_id=r.station_id,
+            source=r.source,
             geometry=WKTElement(f"POINT({r.lon} {r.lat})", srid=4326),
             reading_type=r.reading_type.value,
             value=r.value,

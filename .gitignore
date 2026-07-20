@@ -44,6 +44,7 @@ data/cache/
 models/*.pkl
 models/*.joblib
 !models/.gitkeep
+.run/
 
 # Docker volumes leftovers
 postgres_data/
