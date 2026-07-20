@@ -23,6 +23,7 @@ class ReadingType(StrEnum):
     TEMP = "temp"
     PRECIP = "precip"
     WIND = "wind"
+    WIND_DIR = "wind_dir"
     HUMIDITY = "humidity"
     RIVER_LEVEL = "river_level"
     RIVER_FLOW = "river_flow"

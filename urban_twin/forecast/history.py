@@ -20,39 +20,107 @@ async def fetch_open_meteo_temps(
     lat: float | None = None,
     lon: float | None = None,
 ) -> tuple[list[float], list[datetime]]:
-    """Hourly 2m temperature from Open-Meteo archive (no API key)."""
+    """Hourly 2m temperature from Open-Meteo archive (chunked by year for long spans)."""
+    days = days or settings.forecast_train_days
+    lat = lat if lat is not None else settings.station_lat
+    lon = lon if lon is not None else settings.station_lon
+    end = date.today() - timedelta(days=1)
+    start = end - timedelta(days=days)
+    return await _fetch_open_meteo_hourly(
+        lat=lat,
+        lon=lon,
+        start=start,
+        end=end,
+        hourly_var="temperature_2m",
+        label="temp",
+    )
+
+
+async def fetch_open_meteo_pm25(
+    *,
+    days: int | None = None,
+    lat: float | None = None,
+    lon: float | None = None,
+) -> tuple[list[float], list[datetime]]:
+    """Hourly PM2.5 from Open-Meteo air-quality API (no key)."""
     days = days or settings.forecast_train_days
     lat = lat if lat is not None else settings.station_lat
     lon = lon if lon is not None else settings.station_lon
     end = date.today() - timedelta(days=1)
     start = end - timedelta(days=days)
 
-    url = "https://archive-api.open-meteo.com/v1/archive"
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "start_date": start.isoformat(),
-        "end_date": end.isoformat(),
-        "hourly": "temperature_2m",
-        "timezone": "UTC",
-    }
-    async with httpx.AsyncClient(timeout=180.0) as client:
-        r = await client.get(url, params=params)
-        r.raise_for_status()
-        data = r.json()
-
-    hours = data.get("hourly", {}).get("time", [])
-    temps = data.get("hourly", {}).get("temperature_2m", [])
     values: list[float] = []
     times: list[datetime] = []
-    for t_str, v in zip(hours, temps, strict=False):
-        if v is None:
-            continue
-        dt = datetime.fromisoformat(t_str).replace(tzinfo=timezone.utc)
-        values.append(float(v))
-        times.append(dt)
+    # Air-quality API accepts long ranges; still chunk yearly to be safe
+    cursor = start
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        while cursor <= end:
+            chunk_end = min(cursor + timedelta(days=365), end)
+            url = "https://air-quality-api.open-meteo.com/v1/air-quality"
+            params = {
+                "latitude": lat,
+                "longitude": lon,
+                "start_date": cursor.isoformat(),
+                "end_date": chunk_end.isoformat(),
+                "hourly": "pm2_5",
+                "timezone": "UTC",
+            }
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+            data = r.json()
+            hours = data.get("hourly", {}).get("time", [])
+            series = data.get("hourly", {}).get("pm2_5", [])
+            for t_str, v in zip(hours, series, strict=False):
+                if v is None:
+                    continue
+                dt = datetime.fromisoformat(t_str).replace(tzinfo=timezone.utc)
+                values.append(float(v))
+                times.append(dt)
+            cursor = chunk_end + timedelta(days=1)
+
+    logger.info("open-meteo pm2.5 history: %s hourly points (%s → %s)", len(values), start, end)
+    return values, times
+
+
+async def _fetch_open_meteo_hourly(
+    *,
+    lat: float,
+    lon: float,
+    start: date,
+    end: date,
+    hourly_var: str,
+    label: str,
+) -> tuple[list[float], list[datetime]]:
+    values: list[float] = []
+    times: list[datetime] = []
+    cursor = start
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        while cursor <= end:
+            chunk_end = min(cursor + timedelta(days=365), end)
+            url = "https://archive-api.open-meteo.com/v1/archive"
+            params = {
+                "latitude": lat,
+                "longitude": lon,
+                "start_date": cursor.isoformat(),
+                "end_date": chunk_end.isoformat(),
+                "hourly": hourly_var,
+                "timezone": "UTC",
+            }
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+            data = r.json()
+            hours = data.get("hourly", {}).get("time", [])
+            series = data.get("hourly", {}).get(hourly_var, [])
+            for t_str, v in zip(hours, series, strict=False):
+                if v is None:
+                    continue
+                dt = datetime.fromisoformat(t_str).replace(tzinfo=timezone.utc)
+                values.append(float(v))
+                times.append(dt)
+            cursor = chunk_end + timedelta(days=1)
     logger.info(
-        "open-meteo temp history: %s hourly points (%s → %s)",
+        "open-meteo %s history: %s hourly points (%s → %s)",
+        label,
         len(values),
         start,
         end,

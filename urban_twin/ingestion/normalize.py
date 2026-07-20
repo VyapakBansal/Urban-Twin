@@ -36,6 +36,7 @@ READING_SPECS: dict[ReadingType, tuple[str, Any]] = {
     ReadingType.TEMP: ("C", ("main", "temp")),
     ReadingType.HUMIDITY: ("%", ("main", "humidity")),
     ReadingType.WIND: ("m/s", ("wind", "speed")),
+    ReadingType.WIND_DIR: ("deg", ("wind", "deg")),
     ReadingType.PRECIP: ("mm", None),  # special: rain.1h or snow.1h or 0
 }
 
@@ -72,6 +73,9 @@ def normalize_openweather_current(
             assert path is not None
             raw = _dig(payload, path)
             if raw is None:
+                # wind.deg can be missing at calm; skip rather than fail the batch
+                if reading_type == ReadingType.WIND_DIR:
+                    continue
                 raise ValueError(f"missing field for {reading_type}: {'.'.join(path)}")
             value = float(raw)
 

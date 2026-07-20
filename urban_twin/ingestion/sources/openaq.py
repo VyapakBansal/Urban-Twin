@@ -1,4 +1,4 @@
-"""OpenAQ nearest air-quality readings for Kensington."""
+"""Air quality ingest: OpenAQ when available, Open-Meteo PM2.5 fallback."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class AirQualitySource:
 
     async def fetch_readings(self) -> list[NormalizedReading]:
         headers = {
-            "User-Agent": "UrbanTwin/0.5 (portfolio; OpenAQ ingest)",
+            "User-Agent": "UrbanTwin/0.5 (air-quality ingest)",
             "Accept": "application/json",
         }
         if settings.openaq_api_key:
@@ -32,8 +32,16 @@ class AirQualitySource:
         try:
             return await self._v2_latest(headers)
         except Exception as exc:
-            logger.warning("OpenAQ v2 failed (%s); trying v3 locations", exc)
-            return await self._v3_fallback(headers)
+            logger.warning("OpenAQ v2 unavailable (%s); trying v3", exc)
+
+        try:
+            rows = await self._v3_fallback(headers)
+            if rows:
+                return rows
+        except Exception as exc:
+            logger.warning("OpenAQ v3 unavailable (%s); using Open-Meteo PM2.5", exc)
+
+        return await self._open_meteo_pm25()
 
     async def _v2_latest(self, headers: dict[str, str]) -> list[NormalizedReading]:
         params = {
@@ -95,11 +103,7 @@ class AirQualitySource:
         return out
 
     async def _v3_fallback(self, headers: dict[str, str]) -> list[NormalizedReading]:
-        # Without a key, v3 may 401 — surface a clear empty result for the orchestrator
         if not settings.openaq_api_key:
-            logger.warning(
-                "OpenAQ requires OPENAQ_API_KEY for reliable access; skipping air layer"
-            )
             return []
         params = {
             "coordinates": f"{settings.station_lon},{settings.station_lat}",
@@ -110,9 +114,39 @@ class AirQualitySource:
             resp = await client.get(OPENAQ_V3, params=params)
             resp.raise_for_status()
             payload = resp.json()
-        # Minimal: if structure differs, return empty rather than crash the whole ingest
         logger.info("OpenAQ v3 locations keys=%s", list(payload.keys()))
         return []
+
+    async def _open_meteo_pm25(self) -> list[NormalizedReading]:
+        url = "https://air-quality-api.open-meteo.com/v1/air-quality"
+        params = {
+            "latitude": settings.station_lat,
+            "longitude": settings.station_lon,
+            "current": "pm2_5",
+            "timezone": "UTC",
+        }
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+        cur = data.get("current") or {}
+        value = cur.get("pm2_5")
+        if value is None:
+            logger.warning("Open-Meteo air quality returned no pm2_5")
+            return []
+        recorded = _parse_ts(cur.get("time"))
+        return [
+            NormalizedReading(
+                station_id=f"openmeteo-aq-{settings.station_id}"[:60],
+                lon=settings.station_lon,
+                lat=settings.station_lat,
+                reading_type=ReadingType.AQI_PM25,
+                value=float(value),
+                unit="ug/m3",
+                recorded_at=recorded,
+                source="open-meteo",
+            )
+        ]
 
 
 def _parse_ts(raw: Any) -> datetime:

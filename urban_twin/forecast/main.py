@@ -16,7 +16,12 @@ from urban_twin.config import settings
 from urban_twin.db.models import Forecast, SensorReading
 from urban_twin.db.session import AsyncSessionLocal
 from urban_twin.forecast.gbr import load_bundle
-from urban_twin.forecast.history import fetch_ec_river_levels, fetch_open_meteo_temps
+from urban_twin.forecast.history import (
+    fetch_ec_river_levels,
+    fetch_open_meteo_pm25,
+    fetch_open_meteo_temps,
+)
+from urban_twin.forecast.lightgbm_model import load_multi_bundle
 from urban_twin.forecast.models import (
     moving_average_forecast,
     persistence_forecast,
@@ -67,6 +72,8 @@ async def _series_for_gbr(
         hist_v, hist_t = await fetch_open_meteo_temps(days=60)
     elif reading_type == "river_level":
         hist_v, hist_t = await fetch_ec_river_levels(days=120)
+    elif reading_type == "aqi_pm25":
+        hist_v, hist_t = await fetch_open_meteo_pm25(days=60)
     else:
         return live_values, live_times
 
@@ -108,7 +115,7 @@ async def generate_once(
     station_id: str | None = None,
     reading_type: str | None = None,
     publish: bool = True,
-    model: str = "gbr",
+    model: str = "lgbm",
 ) -> Forecast | None:
     reading_type = reading_type or settings.forecast_reading_type
     station_id = station_id or _station_for(reading_type)
@@ -116,27 +123,43 @@ async def generate_once(
     lon, lat = _coords_for(reading_type)
 
     live_values, live_times = await _load_series(station_id, reading_type)
-    if not live_values and model != "gbr":
+    if not live_values and model not in ("lgbm", "gbr"):
         logger.warning("no readings for %s/%s — skip forecast", station_id, reading_type)
         return None
 
     result = None
-    if model == "gbr":
-        bundle = load_bundle(reading_type, settings.forecast_horizon_hours)
-        if bundle is None:
+    if model == "lgbm":
+        multi = load_multi_bundle(reading_type)
+        if multi is None:
             logger.warning(
-                "no trained model for %s — run: python -m urban_twin.forecast.train",
+                "no LightGBM multi model for %s — run: python -m urban_twin.forecast.train",
                 reading_type,
             )
             return None
-        # Live polls are sparse early on — pad with recent archive so lag features work
+        values, times = await _series_for_gbr(reading_type, live_values, live_times)
+        result = multi.predict_horizon(values, times, settings.forecast_horizon_hours)
+        if result is None:
+            fallback_v = live_values or values
+            fallback_t = live_times or times
+            if not fallback_v:
+                return None
+            result = persistence_forecast(
+                fallback_v,
+                fallback_t,
+                horizon=horizon,
+                model_version=f"{multi.model_version}+persistence-fallback",
+            )
+    elif model == "gbr":
+        bundle = load_bundle(reading_type, settings.forecast_horizon_hours)
+        if bundle is None:
+            logger.warning(
+                "no HistGBR model for %s — run older train or use --model lgbm",
+                reading_type,
+            )
+            return None
         values, times = await _series_for_gbr(reading_type, live_values, live_times)
         result = bundle.predict_next(values, times)
         if result is None:
-            logger.warning(
-                "%s: still too few points for GBR; using persistence",
-                reading_type,
-            )
             fallback_v = live_values or values
             fallback_t = live_times or times
             if not fallback_v:
@@ -278,9 +301,9 @@ def cli() -> None:
     )
     parser.add_argument(
         "--model",
-        choices=("gbr", "persistence", "moving_avg"),
-        default="gbr",
-        help="Model to run (default: trained HistGBR)",
+        choices=("lgbm", "gbr", "persistence", "moving_avg"),
+        default="lgbm",
+        help="Model to run (default: LightGBM multi-horizon)",
     )
     parser.add_argument(
         "--reading-type",

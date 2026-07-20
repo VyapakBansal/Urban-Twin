@@ -31,6 +31,26 @@ export type Forecast = {
   lon: number;
   lat: number;
   notes?: string | null;
+  horizon_hours?: number | null;
+};
+
+export type PredictOut = {
+  reading_type: string;
+  predicted_value: number;
+  unit: string;
+  target_time: string;
+  horizon_hours: number | null;
+  model_version: string;
+  notes: string | null;
+  horizons_trained: number[];
+};
+
+export type PredictBatchOut = {
+  reading_type: string;
+  unit: string;
+  model_version: string;
+  horizons_trained: number[];
+  predictions: PredictOut[];
 };
 
 export type LiveReadingEvent = {
@@ -79,12 +99,24 @@ export type LayerCounts = {
   readings: number;
 };
 
+export type WindCell = {
+  lon: number;
+  lat: number;
+  speed_ms: number;
+  direction_deg: number;
+  recorded_at: string;
+  source?: string;
+};
+
 export type LayerState = {
   buildings: boolean;
   live: boolean;
   forecast: boolean;
   river: boolean;
   air: boolean;
+  wind: boolean;
+  humidity: boolean;
+  precip: boolean;
   pathways: boolean;
   incidents: boolean;
   amenities: boolean;

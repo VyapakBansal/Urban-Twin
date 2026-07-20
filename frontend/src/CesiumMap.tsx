@@ -8,15 +8,12 @@ import {
   defined,
   EllipsoidTerrainProvider,
   Entity,
-  HorizontalOrigin,
   Ion,
-  LabelStyle,
   Rectangle,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
   UrlTemplateImageryProvider,
   Viewer,
-  VerticalOrigin,
   Math as CesiumMath,
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
@@ -31,6 +28,7 @@ import type {
   LiveReadingEvent,
   MapSelection,
   Pathway,
+  WindCell,
 } from "./types";
 
 const ION = import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined;
@@ -50,12 +48,19 @@ type Props = {
   liveTemp: LiveReadingEvent | null;
   river: LiveReadingEvent | null;
   air: LiveReadingEvent | null;
+  wind: LiveReadingEvent | null;
+  windDir: LiveReadingEvent | null;
+  humidity: LiveReadingEvent | null;
+  precip: LiveReadingEvent | null;
+  windGrid: WindCell[];
   forecasts: Forecast[];
+  forecastHorizon: number;
   pulseKey: number;
   selectionId: string | null;
   onSelect: (sel: MapSelection | null) => void;
   cameraCommand: CameraCommand | null;
   cameraCommandKey: number;
+  theme: "dark" | "light";
 };
 
 function heightForBuilding(b: Building): number {
@@ -155,6 +160,44 @@ function applyCamera(viewer: Viewer, cmd: CameraCommand) {
   });
 }
 
+function windTip(
+  lon: number,
+  lat: number,
+  directionDeg: number,
+  speedMs: number,
+): { lon: number; lat: number } {
+  // Meteorological direction = FROM; arrow shows flow TOWARD
+  const toward = ((directionDeg + 180) % 360) * (Math.PI / 180);
+  const scale = 0.00055 * Math.min(Math.max(speedMs, 0.5), 18);
+  return {
+    lon: lon + Math.sin(toward) * scale,
+    lat: lat + Math.cos(toward) * scale,
+  };
+}
+
+function humidityColor(pct: number): Color {
+  if (pct >= 80) return Color.fromCssColorString("#38bdf8");
+  if (pct >= 50) return Color.fromCssColorString("#7dd3fc");
+  return Color.fromCssColorString("#bae6fd");
+}
+
+function applyBasemap(viewer: Viewer, theme: "dark" | "light") {
+  viewer.imageryLayers.removeAll();
+  const url =
+    theme === "light"
+      ? "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
+      : "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
+  viewer.imageryLayers.addImageryProvider(
+    new UrlTemplateImageryProvider({
+      url,
+      credit: "© OSM © CARTO",
+    }),
+  );
+  const bg = theme === "light" ? "#e8e4dc" : "#0b0f14";
+  viewer.scene.globe.baseColor = Color.fromCssColorString(bg);
+  viewer.scene.backgroundColor = Color.fromCssColorString(bg);
+}
+
 export function CesiumMap({
   buildings,
   pathways,
@@ -164,25 +207,38 @@ export function CesiumMap({
   liveTemp,
   river,
   air,
+  wind,
+  windDir,
+  humidity,
+  precip,
+  windGrid,
   forecasts,
+  forecastHorizon,
   pulseKey,
   selectionId,
   onSelect,
   cameraCommand,
   cameraCommandKey,
+  theme,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const ids = useRef<Record<string, string[]>>({
     buildings: [],
     pathways: [],
     amenities: [],
     incidents: [],
+    wind: [],
   });
   const beacons = useRef<Record<string, Entity | null>>({
     live: null,
     river: null,
     air: null,
+    humidity: null,
+    precip: null,
+    windStation: null,
   });
   const forecastEntities = useRef<Entity[]>([]);
   const metaRef = useRef<Map<string, EntityMeta>>(new Map());
@@ -207,15 +263,7 @@ export function CesiumMap({
       terrainProvider: new EllipsoidTerrainProvider(),
       baseLayer: false,
     });
-    viewer.imageryLayers.removeAll();
-    viewer.imageryLayers.addImageryProvider(
-      new UrlTemplateImageryProvider({
-        url: "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-        credit: "© OSM © CARTO",
-      }),
-    );
-    viewer.scene.globe.baseColor = Color.fromCssColorString("#0b0f14");
-    viewer.scene.backgroundColor = Color.fromCssColorString("#0b0f14");
+    applyBasemap(viewer, themeRef.current);
     viewer.scene.fog.enabled = true;
     viewer.scene.fog.density = 0.00035;
     const ctrl = viewer.scene.screenSpaceCameraController;
@@ -235,9 +283,9 @@ export function CesiumMap({
       id: "aoi-bounds",
       rectangle: {
         coordinates: Rectangle.fromDegrees(AOI.west, AOI.south, AOI.east, AOI.north),
-        material: Color.fromCssColorString("#d4a373").withAlpha(0.07),
+        material: Color.fromCssColorString("#d4a373").withAlpha(0.04),
         outline: true,
-        outlineColor: Color.fromCssColorString("#d4a373").withAlpha(0.85),
+        outlineColor: Color.fromCssColorString("#d4a373").withAlpha(0.45),
         height: 0.5,
       },
     });
@@ -300,6 +348,13 @@ export function CesiumMap({
     if (!viewer || !cameraCommand || cameraCommandKey === 0) return;
     applyCamera(viewer, cameraCommand);
   }, [cameraCommand, cameraCommandKey]);
+
+  // Light / dark basemap
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    applyBasemap(viewer, theme);
+  }, [theme]);
 
   // Selection ring
   useEffect(() => {
@@ -457,18 +512,17 @@ export function CesiumMap({
           outlineWidth: selected ? 3 : 1,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
-        label:
-          a.amenity_type === "transit" || selected
-            ? {
-                text: a.name || a.amenity_type,
-                font: "600 11px DM Sans, sans-serif",
-                fillColor: Color.WHITE,
-                pixelOffset: new Cartesian2(0, -14),
-                showBackground: true,
-                backgroundColor: Color.fromCssColorString("#831843").withAlpha(0.85),
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              }
-            : undefined,
+        label: selected
+          ? {
+              text: a.name || a.amenity_type,
+              font: "600 11px DM Sans, sans-serif",
+              fillColor: Color.WHITE,
+              pixelOffset: new Cartesian2(0, -14),
+              showBackground: true,
+              backgroundColor: Color.fromCssColorString("#831843").withAlpha(0.85),
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            }
+          : undefined,
       });
       metaRef.current.set(id, {
         kind: "amenity",
@@ -506,21 +560,12 @@ export function CesiumMap({
           outlineWidth: selected ? 3 : 2,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
-        label: {
-          text: selected ? inc.description?.slice(0, 40) || "Incident" : "Incident",
-          font: "600 11px DM Sans, sans-serif",
-          fillColor: Color.WHITE,
-          pixelOffset: new Cartesian2(0, -16),
-          showBackground: true,
-          backgroundColor: Color.fromCssColorString("#7f1d1d").withAlpha(0.9),
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        },
       });
       metaRef.current.set(id, {
         kind: "incident",
         id,
         title: "Traffic incident",
-        subtitle: inc.external_id,
+        subtitle: inc.description?.slice(0, 48) || inc.external_id,
         details: [
           { label: "Detail", value: inc.description || "—" },
           {
@@ -565,26 +610,12 @@ export function CesiumMap({
           }, false),
         ),
       },
-      label: {
-        text: `${liveTemp.value.toFixed(1)}°C · weather`,
-        font: "600 14px DM Sans, sans-serif",
-        fillColor: Color.WHITE,
-        style: LabelStyle.FILL_AND_OUTLINE,
-        outlineColor: Color.BLACK,
-        outlineWidth: 3,
-        verticalOrigin: VerticalOrigin.BOTTOM,
-        horizontalOrigin: HorizontalOrigin.CENTER,
-        pixelOffset: new Cartesian2(0, -40),
-        showBackground: true,
-        backgroundColor: Color.fromCssColorString("#111827").withAlpha(0.85),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
     });
     metaRef.current.set(id, {
       kind: "sensor",
       id,
       title: "Live weather",
-      subtitle: liveTemp.station_id,
+      subtitle: `${liveTemp.value.toFixed(1)} ${liveTemp.unit}`,
       details: [
         { label: "Temp", value: `${liveTemp.value.toFixed(1)} ${liveTemp.unit}` },
         { label: "Source", value: liveTemp.source || "openweather" },
@@ -618,25 +649,12 @@ export function CesiumMap({
         bottomRadius: 12,
         material: Color.fromCssColorString("#38bdf8").withAlpha(0.8),
       },
-      label: {
-        text: `Bow River  ${river.value.toFixed(2)} ${river.unit}`,
-        font: "600 13px DM Sans, sans-serif",
-        fillColor: Color.WHITE,
-        style: LabelStyle.FILL_AND_OUTLINE,
-        outlineColor: Color.BLACK,
-        outlineWidth: 3,
-        verticalOrigin: VerticalOrigin.BOTTOM,
-        pixelOffset: new Cartesian2(0, -36),
-        showBackground: true,
-        backgroundColor: Color.fromCssColorString("#0c4a6e").withAlpha(0.92),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
     });
     metaRef.current.set(id, {
       kind: "sensor",
       id,
       title: "Bow River level",
-      subtitle: river.station_id,
+      subtitle: `${river.value.toFixed(2)} ${river.unit}`,
       details: [
         { label: "Level", value: `${river.value.toFixed(3)} ${river.unit}` },
         { label: "Source", value: river.source || "env-canada" },
@@ -673,25 +691,12 @@ export function CesiumMap({
         outlineColor: c.withAlpha(0.9),
         height: 20,
       },
-      label: {
-        text: `PM2.5  ${air.value.toFixed(1)} ${air.unit}`,
-        font: "600 13px DM Sans, sans-serif",
-        fillColor: Color.WHITE,
-        style: LabelStyle.FILL_AND_OUTLINE,
-        outlineColor: Color.BLACK,
-        outlineWidth: 3,
-        verticalOrigin: VerticalOrigin.BOTTOM,
-        pixelOffset: new Cartesian2(0, -28),
-        showBackground: true,
-        backgroundColor: Color.fromCssColorString("#14532d").withAlpha(0.9),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
     });
     metaRef.current.set(id, {
       kind: "sensor",
       id,
       title: "Air quality",
-      subtitle: air.station_id,
+      subtitle: `PM2.5 ${air.value.toFixed(1)} ${air.unit}`,
       details: [
         { label: "PM2.5", value: `${air.value.toFixed(1)} ${air.unit}` },
         { label: "Source", value: air.source || "openaq" },
@@ -718,51 +723,42 @@ export function CesiumMap({
 
     for (const fc of forecasts) {
       const isRiver = fc.reading_type === "river_level";
+      const isAir = fc.reading_type === "aqi_pm25";
+      const h = fc.horizon_hours ?? forecastHorizon;
       const id = `forecast-${fc.reading_type}`;
-      const label = isRiver
-        ? `+24h river ${fc.predicted_value.toFixed(2)} m`
-        : `+24h ${fc.predicted_value.toFixed(1)}°C`;
-      const color = isRiver ? "#38bdf8" : "#c4b5fd";
-      const bg = isRiver ? "#0c4a6e" : "#312e81";
-      const lonOff = isRiver ? 0.002 : 0.0012;
-      const latOff = isRiver ? -0.001 : -0.0004;
+      const color = isRiver ? "#38bdf8" : isAir ? "#4ade80" : "#c4b5fd";
+      const lonOff = isRiver ? 0.0022 : isAir ? -0.002 : 0.0012;
+      const latOff = isRiver ? -0.0012 : isAir ? 0.0014 : -0.0004;
       const lon = fc.lon + lonOff;
       const lat = fc.lat + latOff;
+      const title = isRiver
+        ? `River +${h}h`
+        : isAir
+          ? `PM2.5 +${h}h`
+          : `Temp +${h}h`;
+      const valueText = isRiver
+        ? `${fc.predicted_value.toFixed(3)} m`
+        : isAir
+          ? `${fc.predicted_value.toFixed(1)} µg/m³`
+          : `${fc.predicted_value.toFixed(1)} °C`;
       const entity = viewer.entities.add({
         id,
         position: Cartesian3.fromDegrees(lon, lat, 5),
         cylinder: {
-          length: isRiver ? 28 : 40,
+          length: isRiver ? 28 : isAir ? 32 : 40,
           topRadius: 4,
           bottomRadius: 10,
           material: Color.fromCssColorString(color).withAlpha(0.85),
-        },
-        label: {
-          text: `${label}\n${fc.model_version}`,
-          font: "600 12px DM Sans, sans-serif",
-          fillColor: Color.WHITE,
-          style: LabelStyle.FILL_AND_OUTLINE,
-          outlineColor: Color.BLACK,
-          outlineWidth: 3,
-          verticalOrigin: VerticalOrigin.BOTTOM,
-          pixelOffset: new Cartesian2(0, -36),
-          showBackground: true,
-          backgroundColor: Color.fromCssColorString(bg).withAlpha(0.9),
-          disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
       metaRef.current.set(id, {
         kind: "forecast",
         id,
-        title: isRiver ? "River forecast +24h" : "Temp forecast +24h",
+        title,
         subtitle: fc.model_version,
         details: [
-          {
-            label: "Predicted",
-            value: isRiver
-              ? `${fc.predicted_value.toFixed(3)} m`
-              : `${fc.predicted_value.toFixed(1)} °C`,
-          },
+          { label: "Predicted", value: valueText },
+          { label: "Horizon", value: `+${h}h` },
           {
             label: "Target",
             value: new Date(fc.target_time).toLocaleString(),
@@ -778,7 +774,199 @@ export function CesiumMap({
       });
       forecastEntities.current.push(entity);
     }
-  }, [forecasts, layers.forecast]);
+  }, [forecasts, layers.forecast, forecastHorizon]);
+
+  // Wind vector field across AOI
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    clearGroup(viewer, "wind");
+    if (!layers.wind || !windGrid.length) return;
+    windGrid.forEach((cell, i) => {
+      const tip = windTip(cell.lon, cell.lat, cell.direction_deg, cell.speed_ms);
+      const id = `wind-${i}`;
+      const speed = cell.speed_ms;
+      const color =
+        speed >= 10
+          ? Color.fromCssColorString("#f97316")
+          : speed >= 5
+            ? Color.fromCssColorString("#38bdf8")
+            : Color.fromCssColorString("#94a3b8");
+      viewer.entities.add({
+        id,
+        polyline: {
+          positions: Cartesian3.fromDegreesArrayHeights([
+            cell.lon,
+            cell.lat,
+            40,
+            tip.lon,
+            tip.lat,
+            40,
+          ]),
+          width: 3,
+          material: color.withAlpha(0.9),
+          clampToGround: false,
+        },
+        position: Cartesian3.fromDegrees(tip.lon, tip.lat, 42),
+        point: {
+          pixelSize: 5,
+          color,
+          outlineColor: Color.WHITE,
+          outlineWidth: 1,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      });
+      metaRef.current.set(id, {
+        kind: "sensor",
+        id,
+        title: "Wind",
+        subtitle: `${speed.toFixed(1)} m/s`,
+        details: [
+          { label: "Speed", value: `${speed.toFixed(2)} m/s` },
+          { label: "From", value: `${cell.direction_deg.toFixed(0)}°` },
+          { label: "Source", value: cell.source || "open-meteo" },
+          {
+            label: "Recorded",
+            value: new Date(cell.recorded_at).toLocaleString(),
+          },
+        ],
+        lon: cell.lon,
+        lat: cell.lat,
+      });
+      ids.current.wind.push(id);
+    });
+  }, [windGrid, layers.wind]);
+
+  // Station wind label (OpenWeather)
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    if (beacons.current.windStation) {
+      metaRef.current.delete("wind-station");
+      viewer.entities.remove(beacons.current.windStation);
+      beacons.current.windStation = null;
+    }
+    if (!layers.wind || !wind) return;
+    const dir = windDir?.value ?? 0;
+    const tip = windTip(wind.lon, wind.lat, dir, wind.value);
+    const id = "wind-station";
+    beacons.current.windStation = viewer.entities.add({
+      id,
+      polyline: {
+        positions: Cartesian3.fromDegreesArrayHeights([
+          wind.lon,
+          wind.lat,
+          55,
+          tip.lon,
+          tip.lat,
+          55,
+        ]),
+        width: 5,
+        material: Color.fromCssColorString("#fbbf24").withAlpha(0.95),
+      },
+      position: Cartesian3.fromDegrees(wind.lon, wind.lat, 55),
+      point: {
+        pixelSize: 8,
+        color: Color.fromCssColorString("#fbbf24"),
+        outlineColor: Color.WHITE,
+        outlineWidth: 1,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    });
+    metaRef.current.set(id, {
+      kind: "sensor",
+      id,
+      title: "Station wind",
+      subtitle: `${wind.value.toFixed(1)} ${wind.unit}`,
+      details: [
+        { label: "Speed", value: `${wind.value.toFixed(2)} ${wind.unit}` },
+        {
+          label: "Direction",
+          value: windDir ? `${windDir.value.toFixed(0)}°` : "—",
+        },
+        { label: "Source", value: wind.source || "openweather" },
+      ],
+      lon: wind.lon,
+      lat: wind.lat,
+    });
+  }, [wind, windDir, layers.wind]);
+
+  // Humidity halo
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    if (beacons.current.humidity) {
+      metaRef.current.delete("humidity-sensor");
+      viewer.entities.remove(beacons.current.humidity);
+      beacons.current.humidity = null;
+    }
+    if (!layers.humidity || !humidity) return;
+    const c = humidityColor(humidity.value);
+    const id = "humidity-sensor";
+    beacons.current.humidity = viewer.entities.add({
+      id,
+      position: Cartesian3.fromDegrees(humidity.lon, humidity.lat, 25),
+      ellipse: {
+        semiMajorAxis: 220,
+        semiMinorAxis: 220,
+        material: c.withAlpha(0.22),
+        outline: true,
+        outlineColor: c.withAlpha(0.85),
+        height: 25,
+      },
+    });
+    metaRef.current.set(id, {
+      kind: "sensor",
+      id,
+      title: "Humidity",
+      subtitle: `${humidity.value.toFixed(0)}%`,
+      details: [
+        { label: "RH", value: `${humidity.value.toFixed(0)} ${humidity.unit}` },
+        { label: "Source", value: humidity.source || "openweather" },
+      ],
+      lon: humidity.lon,
+      lat: humidity.lat,
+    });
+  }, [humidity, layers.humidity]);
+
+  // Precip marker
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    if (beacons.current.precip) {
+      metaRef.current.delete("precip-sensor");
+      viewer.entities.remove(beacons.current.precip);
+      beacons.current.precip = null;
+    }
+    if (!layers.precip || !precip) return;
+    const wet = precip.value > 0.05;
+    const id = "precip-sensor";
+    beacons.current.precip = viewer.entities.add({
+      id,
+      position: Cartesian3.fromDegrees(precip.lon + 0.001, precip.lat + 0.001, 30),
+      point: {
+        pixelSize: wet ? 16 : 10,
+        color: wet
+          ? Color.fromCssColorString("#60a5fa")
+          : Color.fromCssColorString("#64748b"),
+        outlineColor: Color.WHITE,
+        outlineWidth: 2,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    });
+    metaRef.current.set(id, {
+      kind: "sensor",
+      id,
+      title: "Precipitation",
+      subtitle: `${precip.value.toFixed(2)} ${precip.unit}`,
+      details: [
+        { label: "1h", value: `${precip.value.toFixed(2)} ${precip.unit}` },
+        { label: "Source", value: precip.source || "openweather" },
+      ],
+      lon: precip.lon,
+      lat: precip.lat,
+    });
+  }, [precip, layers.precip]);
 
   return <div className="cesium-host" ref={containerRef} />;
 }

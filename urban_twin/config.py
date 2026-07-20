@@ -38,17 +38,22 @@ class Settings(BaseSettings):
     ws_bridge_port: int = 8001
 
     forecast_horizon_hours: int = 24
+    forecast_horizons: str = "1,2,3,6,12,24,48"
     forecast_interval_sec: int = 900
-    forecast_model_version: str = "gbr-24h-v1"
+    forecast_model_version: str = "lgbm-mh-v1"
     forecast_reading_type: str = "temp"
-    forecast_targets: str = "temp,river_level"
-    forecast_train_days: int = 730
+    forecast_targets: str = "temp,river_level,aqi_pm25"
+    forecast_train_days: int = 1826  # ~5 years
     forecast_model_dir: str = "models"
 
     # Multi-source feeds
     openaq_api_key: str = ""
     river_station_id: str = "05BH004"
     ingest_sources: str = "weather,river,air,incidents,pathways,amenities"
+
+    # Supabase / cloud (optional — same Postgres protocol as local Docker)
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
 
     @property
     def aoi_bbox(self) -> tuple[float, float, float, float]:
@@ -67,6 +72,10 @@ class Settings(BaseSettings):
     @property
     def forecast_target_list(self) -> list[str]:
         return [s.strip() for s in self.forecast_targets.split(",") if s.strip()]
+
+    @property
+    def forecast_horizon_list(self) -> list[int]:
+        return [int(x.strip()) for x in self.forecast_horizons.split(",") if x.strip()]
 
     @property
     def cors_origin_list(self) -> list[str]:

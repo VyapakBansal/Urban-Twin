@@ -209,7 +209,18 @@ if [[ "$WITH_FRONTEND" -eq 1 ]]; then
     echo "==> npm install (frontend)"
     (cd "$ROOT/frontend" && npm install)
   fi
-  start_bg vite npm --prefix "$ROOT/frontend" run dev -- --host 127.0.0.1 --port 5173
+  # cd into frontend so Windows npm never sees a Git-Bash /c/... path
+  # (MSYS can turn --prefix /c/Projects/... into C:\c\Projects\...).
+  if already_running vite; then
+    echo "  · vite already running (pid $(cat "$PID_DIR/vite.pid"))"
+  else
+    echo "  · starting vite"
+    (
+      cd "$ROOT/frontend"
+      nohup npm run dev -- --host 127.0.0.1 --port 5173 >"$LOG_DIR/vite.log" 2>&1 &
+      echo $! >"$PID_DIR/vite.pid"
+    )
+  fi
   wait_http "http://127.0.0.1:5173" "Vite :5173" 60 || true
 fi
 

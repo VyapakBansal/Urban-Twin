@@ -71,6 +71,42 @@ class ForecastOut(BaseModel):
     notes: str | None = None
 
 
+class PredictOut(BaseModel):
+    reading_type: str
+    predicted_value: float
+    unit: str
+    target_time: datetime
+    horizon_hours: float | None = None
+    model_version: str
+    notes: str | None = None
+    horizons_trained: list[int] = Field(default_factory=list)
+
+
+class PredictBatchOut(BaseModel):
+    reading_type: str
+    unit: str
+    model_version: str
+    horizons_trained: list[int]
+    predictions: list[PredictOut]
+
+
+class ModelInfoOut(BaseModel):
+    reading_type: str
+    model_version: str
+    horizons: list[int]
+    unit: str
+    metrics: dict[str, dict[str, float]]
+
+
+class WindCellOut(BaseModel):
+    lon: float
+    lat: float
+    speed_ms: float
+    direction_deg: float
+    recorded_at: datetime
+    source: str = "open-meteo"
+
+
 class ErrorOut(BaseModel):
     detail: str
 
