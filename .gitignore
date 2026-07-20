@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+*.cover
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Terraform
+infra/**/.terraform/
+infra/**/*.tfstate*
+infra/**/*.tfvars
+!infra/**/*.tfvars.example
+crash.log
+override.tf
+
+# Data / secrets
+*.pem
+*.key
+data/raw/
+data/cache/
+models/*.pkl
+models/*.joblib
+!models/.gitkeep
+
+# Docker volumes leftovers
+postgres_data/

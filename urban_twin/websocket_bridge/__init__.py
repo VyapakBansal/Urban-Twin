@@ -1,0 +1,1 @@
+"""Kafka → WebSocket bridge service."""
