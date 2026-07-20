@@ -28,6 +28,15 @@ class Settings(BaseSettings):
     kafka_topic_sensor_readings: str = "sensor.readings"
     kafka_topic_forecasts: str = "forecasts.generated"
 
+    api_host: str = "127.0.0.1"
+    api_port: int = 8000
+    api_rate_limit: str = "60/minute"
+
+    forecast_horizon_hours: int = 1
+    forecast_interval_sec: int = 900
+    forecast_model_version: str = "persistence-v1"
+    forecast_reading_type: str = "temp"
+
     @property
     def aoi_bbox(self) -> tuple[float, float, float, float]:
         """(min_lon, min_lat, max_lon, max_lat) in WGS84."""

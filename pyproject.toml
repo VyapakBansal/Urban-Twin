@@ -17,6 +17,8 @@ dependencies = [
   "python-dotenv>=1.0.0",
   "shapely>=2.0.6",
   "aiokafka>=0.12.0",
+  "slowapi>=0.1.9",
+  "numpy>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +32,7 @@ dev = [
 urban-ingest = "urban_twin.ingestion.main:cli"
 urban-api = "urban_twin.api.main:cli"
 urban-ws = "urban_twin.websocket_bridge.main:cli"
+urban-forecast = "urban_twin.forecast.main:cli"
 
 [build-system]
 requires = ["setuptools>=75.0"]

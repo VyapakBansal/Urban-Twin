@@ -1,6 +1,6 @@
 # Security Notes — Urban Twin
 
-Working notes for Week 1–2. This is a portfolio learning project, not a production threat model — but we apply **OWASP** and **STRIDE** deliberately so decisions are explainable in interviews.
+Working notes for Week 1–3. This is a portfolio learning project, not a production threat model — but we apply **OWASP** and **STRIDE** deliberately so decisions are explainable in interviews.
 
 ---
 
@@ -21,7 +21,7 @@ Working notes for Week 1–2. This is a portfolio learning project, not a produc
 | **T**ampering | Kafka messages / DB rows altered on the host | Single-user laptop trust boundary; no untrusted network peers | Cloud: VPC, IAM, Kafka ACLs, DB TLS |
 | **R**epudiation | Hard to prove who ingested what | Structured logs with timestamps; DB `ingested_at` | Cloud: centralized audit logs |
 | **I**nformation disclosure | API keys in `.env`, logs, or git; PostGIS data | `.env` ignored; redact `appid` from HTTP logs; never commit `.env` | Secrets Manager / Terraform variables; rotate keys if leaked |
-| **D**enial of service | Overpass / OpenWeather / local Kafka flooded | Poll interval (≥5 min); single broker learning setup | Rate limits (slowapi) on REST; quotas in cloud |
+| **D**enial of service | Overpass / OpenWeather / local Kafka / REST flooded | Poll interval (≥5 min); single broker learning setup; **slowapi** rate limit on REST | Quotas in cloud; WAF later |
 | **E**levation of privilege | N/A for v1 (no user roles) | No auth surface yet by design | If auth is added: least-privilege roles, no shared admin DB user in app |
 
 Trust boundary today: **your laptop**. Docker services and Python processes are inside that boundary. Crossing to the public internet (Week 4–5 deploy) expands the model — re-run STRIDE then.
@@ -68,11 +68,14 @@ OpenWeather keys can appear in terminal output if logged. If that happened:
 
 ---
 
-## Week 4+ checklist (before public demo)
+## Week 4+ checklist (before public demo on Azure)
 
-- [ ] No secrets in Terraform state committed to git  
-- [ ] CloudWatch / billing alarm (cost + abuse signal)  
-- [ ] TLS on public HTTPS endpoints  
-- [ ] REST rate limiting (slowapi) as in PRD  
-- [ ] Revisit STRIDE with AWS VPC as the new trust boundary  
-- [ ] Confirm Kafka and Postgres are not world-reachable  
+- [ ] Local pipeline green for several days (ingest → Kafka → WS + API + forecast)
+- [ ] Azure **budget alert** set *before* first paid resource
+- [ ] No secrets in Terraform state committed to git
+- [ ] TLS on public HTTPS endpoints
+- [ ] REST rate limiting (slowapi) verified
+- [ ] Revisit STRIDE with Azure VNet as the new trust boundary
+- [ ] Confirm Kafka and Postgres are not world-reachable
+- [ ] Destroy / stop resources when not demoing — preserve the $100 credits
+
