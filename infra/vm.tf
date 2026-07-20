@@ -1,5 +1,5 @@
 # Optional demo VM — OFF by default (enable_demo_vm = false).
-# When enabled: one cheap B-series VM to run docker compose (PostGIS + Kafka + apps).
+# When enabled: one B-series VM runs Docker Compose + Python services + nginx.
 
 resource "azurerm_virtual_network" "demo" {
   count               = var.enable_demo_vm ? 1 : 0
@@ -37,26 +37,15 @@ resource "azurerm_network_security_group" "demo" {
     destination_address_prefix = "*"
   }
 
+  # Public map + reverse-proxied API/WS (API and WS stay on localhost only)
   security_rule {
-    name                       = "HTTP-API"
+    name                       = "HTTP"
     priority                   = 1002
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
     source_port_range          = "*"
-    destination_port_range     = "8000"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
-  }
-
-  security_rule {
-    name                       = "HTTP-WS"
-    priority                   = 1003
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "8001"
+    destination_port_range     = "80"
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
@@ -98,7 +87,7 @@ resource "azurerm_linux_virtual_machine" "demo" {
   name                = "vm-${local.name_prefix}"
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
-  size                = "Standard_B2s"
+  size                = var.vm_size
   admin_username      = var.admin_username
   tags                = local.tags
 
@@ -123,10 +112,21 @@ resource "azurerm_linux_virtual_machine" "demo" {
     version   = "latest"
   }
 
+  custom_data = base64encode(templatefile("${path.module}/../deploy/cloud-init.yaml.tftpl", {
+    openweather_api_key = var.openweather_api_key
+    openaq_api_key      = var.openaq_api_key
+    git_repo_url        = var.git_repo_url
+    git_branch          = var.git_branch
+  }))
+
   lifecycle {
     precondition {
       condition     = var.ssh_public_key != ""
       error_message = "ssh_public_key must be set when enable_demo_vm = true."
+    }
+    precondition {
+      condition     = var.openweather_api_key != ""
+      error_message = "openweather_api_key must be set when enable_demo_vm = true."
     }
   }
 }

@@ -54,6 +54,38 @@ variable "ssh_public_key" {
 
 variable "allowed_ssh_cidr" {
   type        = string
-  description = "CIDR allowed to SSH (your public IP /32). Never 0.0.0.0/0 for long-lived demos."
-  default     = "0.0.0.0/0" # override in tfvars before apply
+  description = "CIDR allowed to SSH (your public IP /32). Never leave 0.0.0.0/0 for long."
+  default     = "0.0.0.0/0"
+}
+
+variable "git_repo_url" {
+  type        = string
+  description = "Public git clone URL for bootstrap."
+  default     = "https://github.com/VyapakBansal/Urban-Twin.git"
+}
+
+variable "git_branch" {
+  type        = string
+  description = "Branch to clone on the VM."
+  default     = "main"
+}
+
+variable "openweather_api_key" {
+  type        = string
+  description = "OpenWeather API key written to the VM .env via cloud-init."
+  default     = ""
+  sensitive   = true
+}
+
+variable "openaq_api_key" {
+  type        = string
+  description = "Optional OpenAQ API key."
+  default     = ""
+  sensitive   = true
+}
+
+variable "vm_size" {
+  type        = string
+  description = "Azure VM size for the demo host."
+  default     = "Standard_B2s"
 }

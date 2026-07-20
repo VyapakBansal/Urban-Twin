@@ -38,17 +38,17 @@ Live weather, Bow River levels, air quality, Calgary pathways & traffic incident
            Cesium twin (click · fly · layers)
 ```
 
-| Component | Role | Port |
-|---|---|---|
-| PostGIS | Spatial DB | `localhost:5433` |
-| Kafka (KRaft) | Event bus | `localhost:9092` |
-| Ingestion | weather, river, air, pathways, incidents, amenities | loop |
-| WebSocket bridge | Kafka → browsers | `:8001` `/ws/live` |
-| FastAPI | REST + layers | `:8000` |
-| Forecast worker | 24h HistGBR temp + river | loop |
-| Frontend | React + Cesium | `:5173` (local) / `:80` (Azure) |
+| Component        | Role                                                | Port                            |
+| ---------------- | --------------------------------------------------- | ------------------------------- |
+| PostGIS          | Spatial DB                                          | `localhost:5433`                |
+| Kafka (KRaft)    | Event bus                                           | `localhost:9092`                |
+| Ingestion        | weather, river, air, pathways, incidents, amenities | loop                            |
+| WebSocket bridge | Kafka → browsers                                    | `:8001` `/ws/live`              |
+| FastAPI          | REST + layers                                       | `:8000`                         |
+| Forecast worker  | 24h HistGBR temp + river                            | loop                            |
+| Frontend         | React + Cesium                                      | `:5173` (local) / `:80` (Azure) |
 
-**“Real-time” here:** the *pipeline* pushes updates within seconds of ingest. Source APIs update every few minutes — we do not pretend otherwise.
+**“Real-time” here:** the _pipeline_ pushes updates within seconds of ingest. Source APIs update every few minutes — we do not pretend otherwise.
 
 ---
 
@@ -64,15 +64,15 @@ npm run dev                   # Docker + migrate + ingest + forecast + API + WS 
 
 Open **http://127.0.0.1:5173**.
 
-| npm script | What it does |
-|---|---|
-| `npm run dev` | Full stack + frontend |
-| `npm run up` | Backend only |
-| `npm run down` | Stop Python/Vite |
+| npm script         | What it does            |
+| ------------------ | ----------------------- |
+| `npm run dev`      | Full stack + frontend   |
+| `npm run up`       | Backend only            |
+| `npm run down`     | Stop Python/Vite        |
 | `npm run down:all` | Stop processes + Docker |
-| `npm run validate` | Forecast MAE/RMSE |
-| `npm run train` | Retrain 24h models |
-| `npm run frontend` | Vite only |
+| `npm run validate` | Forecast MAE/RMSE       |
+| `npm run train`    | Retrain 24h models      |
+| `npm run frontend` | Vite only               |
 
 Logs/PIDs: `.run/`. First run may import OSM buildings and train models.
 
@@ -97,10 +97,10 @@ curl "http://127.0.0.1:8000/forecasts"
 
 ## Forecasting (24h temp + river)
 
-| Model | Idea | Version |
-|---|---|---|
-| **HistGBR** (default) | Gradient boosting, lag + calendar features | `gbr-24h-v1` |
-| Persistence / moving avg | Baselines for comparison | `persistence-v1` / `moving-avg-v1` |
+| Model                    | Idea                                       | Version                            |
+| ------------------------ | ------------------------------------------ | ---------------------------------- |
+| **HistGBR** (default)    | Gradient boosting, lag + calendar features | `gbr-24h-v1`                       |
+| Persistence / moving avg | Baselines for comparison                   | `persistence-v1` / `moving-avg-v1` |
 
 Training data (offline): ~2y Open-Meteo hourly temps + multi-year MSC Bow River (`05BH004`).
 
@@ -116,13 +116,13 @@ Artifacts: `models/temp_24h.joblib`, `models/river_level_24h.joblib` (gitignored
 
 ## Data model (PostGIS)
 
-| Table | Contents |
-|---|---|
-| `neighborhood_bounds` | AOI polygon |
-| `buildings` | OSM footprints + optional height |
-| `sensor_readings` | weather / river / air (+ `source`) |
-| `forecasts` | 24h predictions + `model_version` |
-| `pathways` / `amenities` / `incidents` | Civic layers |
+| Table                                  | Contents                           |
+| -------------------------------------- | ---------------------------------- |
+| `neighborhood_bounds`                  | AOI polygon                        |
+| `buildings`                            | OSM footprints + optional height   |
+| `sensor_readings`                      | weather / river / air (+ `source`) |
+| `forecasts`                            | 24h predictions + `model_version`  |
+| `pathways` / `amenities` / `incidents` | Civic layers                       |
 
 Migrations: Alembic. CRS: **EPSG:4326**.
 
@@ -146,13 +146,13 @@ docker-compose.yml
 
 See [.env.example](.env.example). Important knobs:
 
-| Variable | Purpose |
-|---|---|
-| `OPENWEATHER_API_KEY` | Weather ingest (required) |
-| `CORS_ORIGINS` | Comma-separated browser origins |
-| `API_HOST` | `127.0.0.1` local; `0.0.0.0` behind nginx on Azure |
-| `FORECAST_HORIZON_HOURS` | Default `24` |
-| `FORECAST_TARGETS` | `temp,river_level` |
+| Variable                 | Purpose                                            |
+| ------------------------ | -------------------------------------------------- |
+| `OPENWEATHER_API_KEY`    | Weather ingest (required)                          |
+| `CORS_ORIGINS`           | Comma-separated browser origins                    |
+| `API_HOST`               | `127.0.0.1` local; `0.0.0.0` behind nginx on Azure |
+| `FORECAST_HORIZON_HOURS` | Default `24`                                       |
+| `FORECAST_TARGETS`       | `temp,river_level`                                 |
 
 ---
 
@@ -221,34 +221,34 @@ Details: [infra/README.md](infra/README.md).
 
 ## Demo for non-engineers (≈30 seconds)
 
-1. Open the map — *“Kensington digital twin, not Google Maps with a temperature sticker.”*
-2. Buildings on — *“OSM footprints in a spatial database.”*
-3. Bow River — *“Live river level; this area flooded in 2013.”*
-4. Click a beacon / café / incident — *“Every layer is inspectable.”*
-5. Forecast markers — *“24-hour ML forecast for temp and river.”*
+1. Open the map — _“Kensington digital twin, not Google Maps with a temperature sticker.”_
+2. Buildings on — _“OSM footprints in a spatial database.”_
+3. Bow River — _“Live river level; this area flooded in 2013.”_
+4. Click a beacon / café / incident — _“Every layer is inspectable.”_
+5. Forecast markers — _“24-hour ML forecast for temp and river.”_
 6. If they ask how — Kafka + PostGIS + Terraform.
 
 ---
 
 ## Roadmap
 
-| Week | Focus | Status |
-|---|---|---|
-| 1 | PostGIS, Alembic, ingest, OSM buildings | Done |
-| 2 | Kafka + WebSocket bridge | Done |
-| 3 | FastAPI + forecast baselines | Done |
-| 4 | Azure Terraform (demo VM) | Ready to apply |
-| 5 | Cesium twin + multi-source layers + interactivity | Done |
-| 6 | 24h HistGBR + one-command `npm run dev` + Azure bootstrap | Done |
+| Week | Focus                                                     | Status         |
+| ---- | --------------------------------------------------------- | -------------- |
+| 1    | PostGIS, Alembic, ingest, OSM buildings                   | Done           |
+| 2    | Kafka + WebSocket bridge                                  | Done           |
+| 3    | FastAPI + forecast baselines                              | Done           |
+| 4    | Azure Terraform (demo VM)                                 | Ready to apply |
+| 5    | Cesium twin + multi-source layers + interactivity         | Done           |
+| 6    | 24h HistGBR + one-command `npm run dev` + Azure bootstrap | Done           |
 
 ---
 
 ## Why Kafka / Terraform on a small AOI?
 
-Learning vehicle for topics, consumer groups, offsets, and IaC — not a throughput necessity. Prefer that answer in interviews over claiming scale this neighbourhood does not need.
+Learning vehicle for topics, consumer groups, offsets, and IaC — not a throughput necessity.
 
 ---
 
 ## License / authorship
 
-Portfolio project by Vyapak. Data © OpenStreetMap contributors; weather © OpenWeather; hydrometric © Environment and Climate Change Canada.
+Portfolio project by Vyapak Bansal. Data © OpenStreetMap contributors; weather © OpenWeather; hydrometric © Environment and Climate Change Canada.

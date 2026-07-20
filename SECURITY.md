@@ -72,10 +72,10 @@ OpenWeather keys can appear in terminal output if logged. If that happened:
 
 - [ ] Local pipeline green for several days (ingest → Kafka → WS + API + forecast)
 - [ ] Azure **budget alert** set *before* first paid resource
-- [ ] No secrets in Terraform state committed to git
-- [ ] TLS on public HTTPS endpoints
+- [ ] No secrets in Terraform state committed to git (`*.tfvars` gitignored)
+- [ ] Demo uses HTTP only behind NSG (no TLS yet — destroy after demo)
 - [ ] REST rate limiting (slowapi) verified
-- [ ] Revisit STRIDE with Azure VNet as the new trust boundary
-- [ ] Confirm Kafka and Postgres are not world-reachable
+- [ ] Kafka and Postgres bound to localhost on the VM (not world-reachable)
+- [ ] SSH locked to your `/32` CIDR
 - [ ] Destroy / stop resources when not demoing — preserve the $100 credits
 

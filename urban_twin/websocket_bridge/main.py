@@ -113,8 +113,8 @@ app = create_app()
 
 def cli() -> None:
     parser = argparse.ArgumentParser(description="Urban Twin WebSocket bridge")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8001)
+    parser.add_argument("--host", default=settings.ws_bridge_host)
+    parser.add_argument("--port", type=int, default=settings.ws_bridge_port)
     args = parser.parse_args()
 
     logging.basicConfig(

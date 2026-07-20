@@ -8,9 +8,20 @@ import type {
   Reading,
 } from "./types";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
+/** Dev: hit local API. Prod (Azure nginx): same-origin `/api` + `/ws`. */
+const API_BASE =
+  import.meta.env.VITE_API_BASE ??
+  (import.meta.env.DEV ? "http://127.0.0.1:8000" : "/api");
 
-export const WS_URL = import.meta.env.VITE_WS_URL ?? "ws://127.0.0.1:8001/ws/live";
+function defaultWsUrl(): string {
+  if (typeof window === "undefined") return "ws://127.0.0.1:8001/ws/live";
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${window.location.host}/ws/live`;
+}
+
+export const WS_URL =
+  import.meta.env.VITE_WS_URL ??
+  (import.meta.env.DEV ? "ws://127.0.0.1:8001/ws/live" : defaultWsUrl());
 
 const AOI_BBOX = "-114.100,51.048,-114.062,51.062";
 const WIDE_BBOX = "-114.120,51.040,-114.050,51.070";
@@ -18,7 +29,9 @@ const WIDE_BBOX = "-114.120,51.040,-114.050,51.070";
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) {
-    throw new Error(`${path} → ${res.status} (is the API running on :8000?)`);
+    throw new Error(
+      `${path} → ${res.status} (is the API reachable via ${API_BASE || "same-origin"}?)`,
+    );
   }
   return res.json() as Promise<T>;
 }
@@ -32,7 +45,6 @@ export function fetchLatestReadings(): Promise<Reading[]> {
 }
 
 export function fetchForecasts(): Promise<Forecast[]> {
-  // Latest per (station, reading_type) — includes temp + river_level
   return getJson(`/forecasts`);
 }
 
