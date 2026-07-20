@@ -3,8 +3,6 @@ import {
   Cartesian2,
   Cartesian3,
   Color,
-  ColorMaterialProperty,
-  CallbackProperty,
   defined,
   EllipsoidTerrainProvider,
   Entity,
@@ -84,13 +82,6 @@ function amenityColor(t: string): Color {
   return Color.fromCssColorString("#a3a3a3");
 }
 
-function airColor(pm25: number): Color {
-  if (pm25 <= 12) return Color.fromCssColorString("#4ade80");
-  if (pm25 <= 35) return Color.fromCssColorString("#fbbf24");
-  if (pm25 <= 55) return Color.fromCssColorString("#fb923c");
-  return Color.fromCssColorString("#ef4444");
-}
-
 function centroid(ring: number[][]): { lon: number; lat: number } {
   let sx = 0;
   let sy = 0;
@@ -168,17 +159,33 @@ function windTip(
 ): { lon: number; lat: number } {
   // Meteorological direction = FROM; arrow shows flow TOWARD
   const toward = ((directionDeg + 180) % 360) * (Math.PI / 180);
-  const scale = 0.00055 * Math.min(Math.max(speedMs, 0.5), 18);
+  const scale = 0.00032 * Math.min(Math.max(speedMs, 0.5), 14);
   return {
     lon: lon + Math.sin(toward) * scale,
     lat: lat + Math.cos(toward) * scale,
   };
 }
 
-function humidityColor(pct: number): Color {
-  if (pct >= 80) return Color.fromCssColorString("#38bdf8");
-  if (pct >= 50) return Color.fromCssColorString("#7dd3fc");
-  return Color.fromCssColorString("#bae6fd");
+/** Flat ground pin — point + thin ring. No cones / pulsing volumes. */
+function groundPinOpts(colorCss: string, ringM = 22) {
+  const fill = Color.fromCssColorString(colorCss);
+  return {
+    point: {
+      pixelSize: 9,
+      color: fill.withAlpha(0.95),
+      outlineColor: Color.fromCssColorString("#f5f0e8").withAlpha(0.85),
+      outlineWidth: 1.5,
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    },
+    ellipse: {
+      semiMajorAxis: ringM,
+      semiMinorAxis: ringM,
+      material: fill.withAlpha(0.1),
+      outline: true,
+      outlineColor: fill.withAlpha(0.55),
+      height: 1.2,
+    },
+  };
 }
 
 function applyBasemap(viewer: Viewer, theme: "dark" | "light") {
@@ -214,7 +221,7 @@ export function CesiumMap({
   windGrid,
   forecasts,
   forecastHorizon,
-  pulseKey,
+  pulseKey: _pulseKey,
   selectionId,
   onSelect,
   cameraCommand,
@@ -349,10 +356,15 @@ export function CesiumMap({
     applyCamera(viewer, cameraCommand);
   }, [cameraCommand, cameraCommandKey]);
 
-  // Light / dark basemap
+  // Light / dark basemap (skip first paint — init already applied)
+  const themeReady = useRef(false);
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
+    if (!themeReady.current) {
+      themeReady.current = true;
+      return;
+    }
     applyBasemap(viewer, theme);
   }, [theme]);
 
@@ -371,12 +383,12 @@ export function CesiumMap({
       id: "selection-ring",
       position: Cartesian3.fromDegrees(meta.lon, meta.lat, 1),
       ellipse: {
-        semiMajorAxis: meta.kind === "building" ? 45 : 55,
-        semiMinorAxis: meta.kind === "building" ? 45 : 55,
-        material: Color.fromCssColorString("#f59e0b").withAlpha(0.22),
+        semiMajorAxis: meta.kind === "building" ? 28 : 32,
+        semiMinorAxis: meta.kind === "building" ? 28 : 32,
+        material: Color.fromCssColorString("#d4a373").withAlpha(0.08),
         outline: true,
-        outlineColor: Color.fromCssColorString("#f59e0b").withAlpha(0.95),
-        height: 1,
+        outlineColor: Color.fromCssColorString("#d4a373").withAlpha(0.75),
+        height: 1.5,
       },
     });
   }, [selectionId, buildings, amenities, incidents, pathways, liveTemp, river, air, forecasts]);
@@ -409,7 +421,6 @@ export function CesiumMap({
         const positions = ring.flatMap((c) => [c[0], c[1]]);
         if (positions.length < 6) return;
         const id = `bldg-${b.id}-${i}`;
-        const selected = selectionId === id || selectionId === `bldg-${b.id}-0`;
         const c = centroid(ring);
         const h = heightForBuilding(b);
         viewer.entities.add({
@@ -417,9 +428,8 @@ export function CesiumMap({
           polygon: {
             hierarchy: Cartesian3.fromDegreesArray(positions),
             extrudedHeight: h,
-            material: facadeColor(b, selected),
-            outline: selected,
-            outlineColor: Color.fromCssColorString("#fde68a"),
+            material: facadeColor(b, false),
+            outline: false,
             height: 0,
           },
         });
@@ -443,9 +453,9 @@ export function CesiumMap({
       didFly.current = true;
       flyHome(viewer, 2.2);
     }
-  }, [buildings, layers.buildings, selectionId]);
+  }, [buildings, layers.buildings]);
 
-  // Pathways
+  // Pathway lines
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -461,15 +471,12 @@ export function CesiumMap({
       const positions = coords.flatMap((c) => [c[0], c[1]]);
       const id = `path-${p.id}`;
       const mid = coords[Math.floor(coords.length / 2)];
-      const selected = selectionId === id;
       viewer.entities.add({
         id,
         polyline: {
           positions: Cartesian3.fromDegreesArray(positions),
-          width: selected ? 6 : 3,
-          material: Color.fromCssColorString(selected ? "#5eead4" : "#2dd4bf").withAlpha(
-            selected ? 1 : 0.85,
-          ),
+          width: 3,
+          material: Color.fromCssColorString("#2dd4bf").withAlpha(0.85),
           clampToGround: true,
         },
       });
@@ -487,7 +494,7 @@ export function CesiumMap({
       });
       ids.current.pathways.push(id);
     }
-  }, [pathways, layers.pathways, selectionId]);
+  }, [pathways, layers.pathways]);
 
   // Amenities
   useEffect(() => {
@@ -583,7 +590,7 @@ export function CesiumMap({
     }
   }, [incidents, layers.incidents, selectionId]);
 
-  // Live weather beacon
+  // Live weather — ground pin
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -593,23 +600,12 @@ export function CesiumMap({
       beacons.current.live = null;
     }
     if (!layers.live || !liveTemp) return;
-    const t0 = Date.now();
     const id = "live-sensor";
+    const pin = groundPinOpts("#d4a373", 26);
     beacons.current.live = viewer.entities.add({
       id,
-      position: Cartesian3.fromDegrees(liveTemp.lon, liveTemp.lat, 5),
-      cylinder: {
-        length: 55,
-        topRadius: 6,
-        bottomRadius: 14,
-        material: new ColorMaterialProperty(
-          new CallbackProperty(() => {
-            const pulse =
-              0.55 + 0.35 * Math.sin((Date.now() - t0 + pulseKey * 100) / 280);
-            return Color.fromCssColorString("#f59e0b").withAlpha(pulse);
-          }, false),
-        ),
-      },
+      position: Cartesian3.fromDegrees(liveTemp.lon, liveTemp.lat, 2),
+      ...pin,
     });
     metaRef.current.set(id, {
       kind: "sensor",
@@ -627,9 +623,9 @@ export function CesiumMap({
       lon: liveTemp.lon,
       lat: liveTemp.lat,
     });
-  }, [liveTemp, layers.live, pulseKey]);
+  }, [liveTemp, layers.live]);
 
-  // River beacon
+  // River — ground pin
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -640,15 +636,11 @@ export function CesiumMap({
     }
     if (!layers.river || !river) return;
     const id = "river-sensor";
+    const pin = groundPinOpts("#5b9bb8", 26);
     beacons.current.river = viewer.entities.add({
       id,
-      position: Cartesian3.fromDegrees(river.lon, river.lat, 5),
-      cylinder: {
-        length: 45,
-        topRadius: 5,
-        bottomRadius: 12,
-        material: Color.fromCssColorString("#38bdf8").withAlpha(0.8),
-      },
+      position: Cartesian3.fromDegrees(river.lon, river.lat, 2),
+      ...pin,
     });
     metaRef.current.set(id, {
       kind: "sensor",
@@ -668,7 +660,7 @@ export function CesiumMap({
     });
   }, [river, layers.river]);
 
-  // Air quality
+  // Air quality — compact ring (no giant halo)
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -678,19 +670,14 @@ export function CesiumMap({
       beacons.current.air = null;
     }
     if (!layers.air || !air) return;
-    const c = airColor(air.value);
     const id = "air-sensor";
+    const tone =
+      air.value <= 12 ? "#6b9b7a" : air.value <= 35 ? "#c4a574" : "#b86a5a";
+    const pin = groundPinOpts(tone, 30);
     beacons.current.air = viewer.entities.add({
       id,
-      position: Cartesian3.fromDegrees(air.lon, air.lat, 20),
-      ellipse: {
-        semiMajorAxis: 280,
-        semiMinorAxis: 280,
-        material: c.withAlpha(0.28),
-        outline: true,
-        outlineColor: c.withAlpha(0.9),
-        height: 20,
-      },
+      position: Cartesian3.fromDegrees(air.lon, air.lat, 2),
+      ...pin,
     });
     metaRef.current.set(id, {
       kind: "sensor",
@@ -710,7 +697,7 @@ export function CesiumMap({
     });
   }, [air, layers.air]);
 
-  // Forecasts
+  // Forecasts — small offset pins (values live in the side panel)
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -721,16 +708,26 @@ export function CesiumMap({
     forecastEntities.current = [];
     if (!layers.forecast || !forecasts.length) return;
 
+    const palette: Record<string, string> = {
+      temp: "#c4a574",
+      river_level: "#5b9bb8",
+      aqi_pm25: "#6b9b7a",
+    };
+    const offsets: Record<string, [number, number]> = {
+      temp: [0.0009, -0.0003],
+      river_level: [0.0018, -0.001],
+      aqi_pm25: [-0.0014, 0.0009],
+    };
+
     for (const fc of forecasts) {
-      const isRiver = fc.reading_type === "river_level";
-      const isAir = fc.reading_type === "aqi_pm25";
       const h = fc.horizon_hours ?? forecastHorizon;
       const id = `forecast-${fc.reading_type}`;
-      const color = isRiver ? "#38bdf8" : isAir ? "#4ade80" : "#c4b5fd";
-      const lonOff = isRiver ? 0.0022 : isAir ? -0.002 : 0.0012;
-      const latOff = isRiver ? -0.0012 : isAir ? 0.0014 : -0.0004;
+      const [lonOff, latOff] = offsets[fc.reading_type] ?? [0.001, 0];
       const lon = fc.lon + lonOff;
       const lat = fc.lat + latOff;
+      const color = palette[fc.reading_type] ?? "#a8a29e";
+      const isRiver = fc.reading_type === "river_level";
+      const isAir = fc.reading_type === "aqi_pm25";
       const title = isRiver
         ? `River +${h}h`
         : isAir
@@ -741,15 +738,11 @@ export function CesiumMap({
         : isAir
           ? `${fc.predicted_value.toFixed(1)} µg/m³`
           : `${fc.predicted_value.toFixed(1)} °C`;
+      const pin = groundPinOpts(color, 18);
       const entity = viewer.entities.add({
         id,
-        position: Cartesian3.fromDegrees(lon, lat, 5),
-        cylinder: {
-          length: isRiver ? 28 : isAir ? 32 : 40,
-          topRadius: 4,
-          bottomRadius: 10,
-          material: Color.fromCssColorString(color).withAlpha(0.85),
-        },
+        position: Cartesian3.fromDegrees(lon, lat, 2),
+        ...pin,
       });
       metaRef.current.set(id, {
         kind: "forecast",
@@ -776,43 +769,36 @@ export function CesiumMap({
     }
   }, [forecasts, layers.forecast, forecastHorizon]);
 
-  // Wind vector field across AOI
+  // Wind field — short muted ticks (pathway-adjacent language)
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
     clearGroup(viewer, "wind");
     if (!layers.wind || !windGrid.length) return;
+    const stroke = Color.fromCssColorString("#8a9aa3").withAlpha(0.75);
     windGrid.forEach((cell, i) => {
       const tip = windTip(cell.lon, cell.lat, cell.direction_deg, cell.speed_ms);
       const id = `wind-${i}`;
       const speed = cell.speed_ms;
-      const color =
-        speed >= 10
-          ? Color.fromCssColorString("#f97316")
-          : speed >= 5
-            ? Color.fromCssColorString("#38bdf8")
-            : Color.fromCssColorString("#94a3b8");
       viewer.entities.add({
         id,
         polyline: {
           positions: Cartesian3.fromDegreesArrayHeights([
             cell.lon,
             cell.lat,
-            40,
+            12,
             tip.lon,
             tip.lat,
-            40,
+            12,
           ]),
-          width: 3,
-          material: color.withAlpha(0.9),
+          width: 1.5,
+          material: stroke,
           clampToGround: false,
         },
-        position: Cartesian3.fromDegrees(tip.lon, tip.lat, 42),
+        position: Cartesian3.fromDegrees(cell.lon, cell.lat, 12),
         point: {
-          pixelSize: 5,
-          color,
-          outlineColor: Color.WHITE,
-          outlineWidth: 1,
+          pixelSize: 3,
+          color: stroke,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
@@ -837,7 +823,7 @@ export function CesiumMap({
     });
   }, [windGrid, layers.wind]);
 
-  // Station wind label (OpenWeather)
+  // Station wind — single pin (direction shown via grid when on)
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -847,31 +833,14 @@ export function CesiumMap({
       beacons.current.windStation = null;
     }
     if (!layers.wind || !wind) return;
-    const dir = windDir?.value ?? 0;
-    const tip = windTip(wind.lon, wind.lat, dir, wind.value);
+    // Prefer grid ticks; only show station pin when no grid cells
+    if (windGrid.length) return;
     const id = "wind-station";
+    const pin = groundPinOpts("#8a9aa3", 20);
     beacons.current.windStation = viewer.entities.add({
       id,
-      polyline: {
-        positions: Cartesian3.fromDegreesArrayHeights([
-          wind.lon,
-          wind.lat,
-          55,
-          tip.lon,
-          tip.lat,
-          55,
-        ]),
-        width: 5,
-        material: Color.fromCssColorString("#fbbf24").withAlpha(0.95),
-      },
-      position: Cartesian3.fromDegrees(wind.lon, wind.lat, 55),
-      point: {
-        pixelSize: 8,
-        color: Color.fromCssColorString("#fbbf24"),
-        outlineColor: Color.WHITE,
-        outlineWidth: 1,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
+      position: Cartesian3.fromDegrees(wind.lon, wind.lat, 2),
+      ...pin,
     });
     metaRef.current.set(id, {
       kind: "sensor",
@@ -889,9 +858,9 @@ export function CesiumMap({
       lon: wind.lon,
       lat: wind.lat,
     });
-  }, [wind, windDir, layers.wind]);
+  }, [wind, windDir, layers.wind, windGrid.length]);
 
-  // Humidity halo
+  // Humidity — pin only
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -901,19 +870,16 @@ export function CesiumMap({
       beacons.current.humidity = null;
     }
     if (!layers.humidity || !humidity) return;
-    const c = humidityColor(humidity.value);
     const id = "humidity-sensor";
+    const pin = groundPinOpts("#7a8f9c", 18);
     beacons.current.humidity = viewer.entities.add({
       id,
-      position: Cartesian3.fromDegrees(humidity.lon, humidity.lat, 25),
-      ellipse: {
-        semiMajorAxis: 220,
-        semiMinorAxis: 220,
-        material: c.withAlpha(0.22),
-        outline: true,
-        outlineColor: c.withAlpha(0.85),
-        height: 25,
-      },
+      position: Cartesian3.fromDegrees(
+        humidity.lon + 0.0006,
+        humidity.lat + 0.0004,
+        2,
+      ),
+      ...pin,
     });
     metaRef.current.set(id, {
       kind: "sensor",
@@ -929,7 +895,7 @@ export function CesiumMap({
     });
   }, [humidity, layers.humidity]);
 
-  // Precip marker
+  // Precip — pin only
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -939,20 +905,17 @@ export function CesiumMap({
       beacons.current.precip = null;
     }
     if (!layers.precip || !precip) return;
-    const wet = precip.value > 0.05;
     const id = "precip-sensor";
+    const wet = precip.value > 0.05;
+    const pin = groundPinOpts(wet ? "#6a8aaa" : "#6b7280", 18);
     beacons.current.precip = viewer.entities.add({
       id,
-      position: Cartesian3.fromDegrees(precip.lon + 0.001, precip.lat + 0.001, 30),
-      point: {
-        pixelSize: wet ? 16 : 10,
-        color: wet
-          ? Color.fromCssColorString("#60a5fa")
-          : Color.fromCssColorString("#64748b"),
-        outlineColor: Color.WHITE,
-        outlineWidth: 2,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
+      position: Cartesian3.fromDegrees(
+        precip.lon - 0.0006,
+        precip.lat + 0.0005,
+        2,
+      ),
+      ...pin,
     });
     metaRef.current.set(id, {
       kind: "sensor",

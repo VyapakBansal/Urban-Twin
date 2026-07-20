@@ -54,10 +54,6 @@ async function getJson<T>(path: string, opts: GetOpts = {}): Promise<T> {
   if (!res.ok) {
     throw new Error(`Request failed (${res.status})`);
   }
-  const ctype = res.headers.get("content-type") || "";
-  if (!ctype.includes("application/json")) {
-    throw new Error("Unexpected response type");
-  }
   return res.json() as Promise<T>;
 }
 

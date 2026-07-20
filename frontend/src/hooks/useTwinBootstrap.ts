@@ -65,6 +65,8 @@ export function useTwinBootstrap() {
         setError(null);
       } catch (e) {
         if (ac.signal.aborted) return;
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        if (e instanceof Error && /abort/i.test(e.message)) return;
         setApiOk(false);
         setError(e instanceof Error ? e.message : "Failed to load twin data");
       } finally {

@@ -35,8 +35,8 @@ Trust boundary for local development: the machine running Docker and the Python 
 | Abortable fetches | Cancel in-flight work on unmount |
 | Validated WebSocket payloads | Ignore oversized / unknown reading types |
 | Display sanitization (`safeText`) | Strip control chars from API strings before render |
-| Lazy-loaded Cesium | Smaller initial JS; map code deferred |
-| CSP meta in `frontend/index.html` | Baseline XSS / inject guard for the SPA |
+| Referrer policy | Limit cross-origin referrer leakage |
+| Production CSP (nginx later) | Prefer server headers; Cesium needs `blob:` workers + `wasm-unsafe-eval` — do **not** use a tight meta CSP in Vite or the globe goes black |
 
 Map tiles use public Carto/OSM URLs — **no Mapbox token required**. Adding Mapbox would introduce another secret (A02) and paid dependency without improving the Cesium 3D twin.
 

@@ -56,6 +56,32 @@ body,
   background: var(--page-bg);
 }
 
+.map-fallback.map-error {
+  z-index: 4;
+  display: grid;
+  place-content: center;
+  gap: 0.5rem;
+  text-align: center;
+  color: var(--ink);
+}
+
+.map-fallback.map-error .muted {
+  color: var(--muted);
+  font-size: 0.8rem;
+  max-width: 28rem;
+}
+
+.map-fallback.map-error button {
+  justify-self: center;
+  margin-top: 0.5rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
 .app-shell.is-live-flash::after {
   content: "";
   pointer-events: none;

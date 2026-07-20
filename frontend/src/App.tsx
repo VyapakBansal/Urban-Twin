@@ -1,7 +1,9 @@
-import { lazy, Suspense, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { CesiumMap } from "./CesiumMap";
 import { BrandBar } from "./components/BrandBar";
 import { CameraToolbar } from "./components/CameraToolbar";
 import { LayerPanel, type LayerRow } from "./components/LayerPanel";
+import { MapErrorBoundary } from "./components/MapErrorBoundary";
 import { SelectionCard } from "./components/SelectionCard";
 import { StatusBar } from "./components/StatusBar";
 import { useCamera } from "./hooks/useCamera";
@@ -11,10 +13,6 @@ import { useTheme } from "./hooks/useTheme";
 import { useTwinBootstrap } from "./hooks/useTwinBootstrap";
 import { DEFAULT_LAYERS } from "./lib/constants";
 import type { LayerState, MapSelection } from "./types";
-
-const CesiumMap = lazy(() =>
-  import("./CesiumMap").then((m) => ({ default: m.CesiumMap })),
-);
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
@@ -140,7 +138,7 @@ export default function App() {
 
   return (
     <div className={`app-shell ${sensors.flash ? "is-live-flash" : ""}`}>
-      <Suspense fallback={<div className="map-fallback" aria-busy="true" />}>
+      <MapErrorBoundary>
         <CesiumMap
           buildings={bootstrap.buildings}
           pathways={bootstrap.pathways}
@@ -164,7 +162,7 @@ export default function App() {
           cameraCommandKey={cameraCommandKey}
           theme={theme}
         />
-      </Suspense>
+      </MapErrorBoundary>
 
       <BrandBar theme={theme} onToggleTheme={toggleTheme} />
 
