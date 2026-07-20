@@ -119,7 +119,7 @@ Schema changes go through Alembic only.
 ### 6a. Hosting options
 
 - **Local:** Docker Compose for PostGIS + Kafka; Python processes + Vite on the host
-- **Database:** local PostGIS or Supabase (see [docs/SUPABASE.md](docs/SUPABASE.md))
+- **Database:** local PostGIS or Supabase (see [docs/DEPLOY.md](docs/DEPLOY.md))
 - **Frontend host:** Vercel optional (see [docs/VERCEL.md](docs/VERCEL.md)); API stays on an always-on host
 - **Azure demo VM:** short-lived B2s via Terraform; destroy when finished
 

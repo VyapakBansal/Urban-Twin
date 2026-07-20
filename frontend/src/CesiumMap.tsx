@@ -340,7 +340,29 @@ export function CesiumMap({
     }, ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
 
     viewerRef.current = viewer;
+
+    const resize = () => {
+      try {
+        viewer.resize();
+        viewer.scene.requestRender();
+      } catch {
+        /* destroyed */
+      }
+    };
+    resize();
+    requestAnimationFrame(resize);
+    window.addEventListener("resize", resize);
+    window.addEventListener("orientationchange", resize);
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => resize())
+        : null;
+    if (containerRef.current && ro) ro.observe(containerRef.current);
+
     return () => {
+      window.removeEventListener("resize", resize);
+      window.removeEventListener("orientationchange", resize);
+      ro?.disconnect();
       handler.destroy();
       viewer.destroy();
       viewerRef.current = null;

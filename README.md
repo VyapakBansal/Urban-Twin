@@ -10,8 +10,8 @@ Live weather, Bow River levels, air quality, pathways, traffic incidents, OSM bu
 |---|---|
 | [PRD.md](PRD.md) | Product requirements |
 | [SECURITY.md](SECURITY.md) | STRIDE / OWASP notes |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | Supabase → API host → Vercel |
 | [infra/README.md](infra/README.md) | Azure + Terraform |
-| [docs/SUPABASE.md](docs/SUPABASE.md) | Supabase (Postgres) setup |
 | [docs/VERCEL.md](docs/VERCEL.md) | Frontend hosting on Vercel |
 
 ---

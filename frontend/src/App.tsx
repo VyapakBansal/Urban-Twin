@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CesiumMap } from "./CesiumMap";
 import { BrandBar } from "./components/BrandBar";
 import { CameraToolbar } from "./components/CameraToolbar";
 import { LayerPanel, type LayerRow } from "./components/LayerPanel";
 import { MapErrorBoundary } from "./components/MapErrorBoundary";
+import { MobileChrome } from "./components/MobileChrome";
 import { SelectionCard } from "./components/SelectionCard";
 import { StatusBar } from "./components/StatusBar";
 import { useCamera } from "./hooks/useCamera";
@@ -14,13 +15,36 @@ import { useTwinBootstrap } from "./hooks/useTwinBootstrap";
 import { DEFAULT_LAYERS } from "./lib/constants";
 import type { LayerState, MapSelection } from "./types";
 
+function useIsPhone() {
+  const [phone, setPhone] = useState(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia("(max-width: 720px)").matches
+      : false,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 720px)");
+    const onChange = () => setPhone(mq.matches);
+    onChange();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return phone;
+}
+
 export default function App() {
+  const isPhone = useIsPhone();
   const { theme, toggleTheme } = useTheme();
   const { cameraCommand, cameraCommandKey, runCamera } = useCamera();
   const bootstrap = useTwinBootstrap();
   const [layers, setLayers] = useState<LayerState>({ ...DEFAULT_LAYERS });
   const [horizon, setHorizon] = useState(24);
   const [selection, setSelection] = useState<MapSelection | null>(null);
+  const [layersOpen, setLayersOpen] = useState(false);
+
+  useEffect(() => {
+    // Desktop: layers stay open; phone: start closed so the map is usable
+    setLayersOpen(!isPhone);
+  }, [isPhone]);
 
   const wsEnabled =
     layers.live ||
@@ -84,6 +108,11 @@ export default function App() {
       return;
     }
     runCamera({ type: "home" });
+  }
+
+  function handleSelect(sel: MapSelection | null) {
+    setSelection(sel);
+    if (sel && isPhone) setLayersOpen(false);
   }
 
   const layerRows: LayerRow[] = useMemo(() => {
@@ -157,7 +186,7 @@ export default function App() {
           forecastHorizon={horizon}
           pulseKey={sensors.pulseKey}
           selectionId={selection?.id ?? null}
-          onSelect={setSelection}
+          onSelect={handleSelect}
           cameraCommand={cameraCommand}
           cameraCommandKey={cameraCommandKey}
           theme={theme}
@@ -166,7 +195,13 @@ export default function App() {
 
       <BrandBar theme={theme} onToggleTheme={toggleTheme} />
 
+      {isPhone && !layersOpen && (
+        <MobileChrome onOpen={() => setLayersOpen(true)} />
+      )}
+
       <LayerPanel
+        open={layersOpen}
+        onClose={() => setLayersOpen(false)}
         rows={layerRows}
         layers={layers}
         onToggle={toggle}

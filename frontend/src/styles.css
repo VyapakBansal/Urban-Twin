@@ -37,7 +37,9 @@ html,
 body,
 #root {
   margin: 0;
+  width: 100%;
   height: 100%;
+  height: 100dvh;
   overflow: hidden;
   background: var(--page-bg);
   color: var(--ink);
@@ -48,11 +50,24 @@ body,
   position: relative;
   width: 100%;
   height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  touch-action: manipulation;
+}
+
+.map-root,
+.cesium-host {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
 }
 
 .map-fallback {
   position: absolute;
   inset: 0;
+  z-index: 4;
   background: var(--page-bg);
 }
 
@@ -108,8 +123,8 @@ body,
 
 .brand-bar {
   position: absolute;
-  top: 1rem;
-  left: 1rem;
+  top: max(0.75rem, env(safe-area-inset-top));
+  left: max(0.75rem, env(safe-area-inset-left));
   z-index: 10;
   padding: 0.7rem 0.85rem;
   border: 1px solid var(--line);
@@ -162,17 +177,55 @@ body,
 
 .layer-panel {
   position: absolute;
-  top: 1rem;
-  right: 1rem;
-  z-index: 10;
+  top: max(1rem, env(safe-area-inset-top));
+  right: max(1rem, env(safe-area-inset-right));
+  z-index: 12;
   width: min(16.5rem, calc(100vw - 2rem));
-  max-height: calc(100vh - 5.5rem);
-  overflow: auto;
-  padding: 0.75rem 0.85rem 0.9rem;
+  max-height: calc(100dvh - 5.5rem);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
   border: 1px solid var(--line);
   background: var(--panel);
   backdrop-filter: blur(12px);
   animation: rise 0.55s ease-out 0.06s both;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem 0.85rem 0.35rem;
+}
+
+.panel-head .panel-title {
+  margin: 0;
+}
+
+.panel-close {
+  display: none;
+  margin: 0;
+  padding: 0.35rem 0.5rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.layer-panel-body {
+  overflow: auto;
+  padding: 0 0.85rem 0.9rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sheet-scrim,
+.mobile-layers-btn {
+  display: none;
 }
 
 .panel-title {
@@ -297,7 +350,7 @@ body,
 .cam-toolbar {
   position: absolute;
   left: 50%;
-  bottom: 3.2rem;
+  bottom: calc(3.2rem + env(safe-area-inset-bottom));
   z-index: 10;
   display: flex;
   gap: 0.3rem;
@@ -437,9 +490,9 @@ body,
 
 .status-bar {
   position: absolute;
-  left: 1rem;
-  right: 1rem;
-  bottom: 0.85rem;
+  left: max(0.75rem, env(safe-area-inset-left));
+  right: max(0.75rem, env(safe-area-inset-right));
+  bottom: max(0.65rem, env(safe-area-inset-bottom));
   z-index: 10;
   display: flex;
   flex-wrap: wrap;
@@ -511,28 +564,128 @@ body,
 }
 
 @media (max-width: 720px) {
+  .brand {
+    font-size: 1.45rem;
+  }
+
+  .brand-bar {
+    max-width: calc(100vw - 7.5rem);
+    padding: 0.55rem 0.65rem;
+  }
+
+  .place {
+    font-size: 0.6rem;
+  }
+
+  .mobile-layers-btn {
+    display: block;
+    position: absolute;
+    top: max(0.75rem, env(safe-area-inset-top));
+    right: max(0.75rem, env(safe-area-inset-right));
+    z-index: 11;
+    margin: 0;
+    padding: 0.55rem 0.85rem;
+    min-height: 2.5rem;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    backdrop-filter: blur(12px);
+  }
+
+  .sheet-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 11;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: rgba(0, 0, 0, 0.35);
+    cursor: pointer;
+  }
+
   .layer-panel {
     top: auto;
-    bottom: 3.4rem;
-    max-height: 38vh;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: min(62dvh, 28rem);
+    border-radius: 12px 12px 0 0;
+    transform: translateY(110%);
+    transition: transform 0.28s ease;
+    animation: none;
+    padding-bottom: env(safe-area-inset-bottom);
+    pointer-events: none;
+    visibility: hidden;
+  }
+
+  .layer-panel.is-open {
+    transform: translateY(0);
+    pointer-events: auto;
+    visibility: visible;
+  }
+
+  .panel-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .cam-toolbar {
-    left: 1rem;
-    right: 1rem;
-    bottom: 3.4rem;
+    left: max(0.75rem, env(safe-area-inset-left));
+    right: max(0.75rem, env(safe-area-inset-right));
+    bottom: calc(3.1rem + env(safe-area-inset-bottom));
     max-width: none;
     transform: none;
     justify-content: center;
   }
 
-  .select-card {
-    top: auto;
-    bottom: 12rem;
+  .cam-toolbar button {
+    flex: 1;
+    min-height: 2.5rem;
+    padding: 0.5rem 0.4rem;
   }
 
-  .status-bar .hint {
-    margin-left: 0;
-    width: 100%;
+  .select-card {
+    top: auto;
+    left: max(0.75rem, env(safe-area-inset-left));
+    right: max(0.75rem, env(safe-area-inset-right));
+    bottom: calc(6.2rem + env(safe-area-inset-bottom));
+    width: auto;
+    max-height: 40dvh;
+    overflow: auto;
+  }
+
+  .status-bar {
+    gap: 0.4rem 0.65rem;
+    font-size: 0.68rem;
+  }
+
+  .status-bar .hint,
+  .status-bar .status-counts {
+    display: none;
+  }
+}
+
+@media (min-width: 721px) {
+  .layer-panel {
+    /* Always visible on desktop even if open flag flickers */
+    visibility: visible;
+  }
+
+  .layer-panel:not(.is-open) {
+    /* Keep desktop usable if state lags */
+    display: flex;
+  }
+
+  .sheet-scrim {
+    display: none !important;
   }
 }

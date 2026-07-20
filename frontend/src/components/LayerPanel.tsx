@@ -1,6 +1,5 @@
-import type { LayerState } from "../types";
+import type { Forecast, LayerState } from "../types";
 import { ForecastPanel } from "./ForecastPanel";
-import type { Forecast } from "../types";
 
 export type LayerRow = {
   key: keyof LayerState;
@@ -9,6 +8,8 @@ export type LayerRow = {
 };
 
 type Props = {
+  open: boolean;
+  onClose: () => void;
   rows: LayerRow[];
   layers: LayerState;
   onToggle: (key: keyof LayerState) => void;
@@ -23,6 +24,8 @@ type Props = {
 };
 
 export function LayerPanel({
+  open,
+  onClose,
   rows,
   layers,
   onToggle,
@@ -36,40 +39,69 @@ export function LayerPanel({
   error,
 }: Props) {
   return (
-    <aside className="layer-panel" aria-label="Twin layers">
-      <p className="panel-title">Layers</p>
-      {rows.map(({ key, label, meta }) => (
-        <div key={key} className="layer-row">
-          <input
-            type="checkbox"
-            checked={layers[key]}
-            onChange={() => onToggle(key)}
-            aria-label={`Toggle ${label}`}
-          />
-          <button
-            type="button"
-            className="layer-fly"
-            onClick={() => onFly(key)}
-            title={`Fly to ${label}`}
-          >
-            <span className="layer-label">{label}</span>
-            <span className="layer-meta">{meta}</span>
-          </button>
-        </div>
-      ))}
-
-      {layers.forecast && (
-        <ForecastPanel
-          horizon={horizon}
-          onHorizonChange={onHorizonChange}
-          forecasts={forecasts}
-          loading={predictLoading}
-          error={predictError}
-          showFallbackHint={showPredictHint}
+    <>
+      {open && (
+        <button
+          type="button"
+          className="sheet-scrim"
+          aria-label="Close layers"
+          onClick={onClose}
         />
       )}
+      <aside
+        className={`layer-panel ${open ? "is-open" : ""}`}
+        aria-label="Twin layers"
+        aria-hidden={!open}
+      >
+        <div className="panel-head">
+          <p className="panel-title">Layers</p>
+          <button
+            type="button"
+            className="panel-close"
+            onClick={onClose}
+            aria-label="Close layers panel"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="layer-panel-body">
+          {rows.map(({ key, label, meta }) => (
+            <div key={key} className="layer-row">
+              <input
+                type="checkbox"
+                checked={layers[key]}
+                onChange={() => onToggle(key)}
+                aria-label={`Toggle ${label}`}
+              />
+              <button
+                type="button"
+                className="layer-fly"
+                onClick={() => {
+                  onFly(key);
+                  onClose();
+                }}
+                title={`Fly to ${label}`}
+              >
+                <span className="layer-label">{label}</span>
+                <span className="layer-meta">{meta}</span>
+              </button>
+            </div>
+          ))}
 
-      {error && <p className="error">{error}</p>}
-    </aside>
+          {layers.forecast && (
+            <ForecastPanel
+              horizon={horizon}
+              onHorizonChange={onHorizonChange}
+              forecasts={forecasts}
+              loading={predictLoading}
+              error={predictError}
+              showFallbackHint={showPredictHint}
+            />
+          )}
+
+          {error && <p className="error">{error}</p>}
+        </div>
+      </aside>
+    </>
   );
 }

@@ -1,17 +1,25 @@
 # Vercel hosting (frontend)
 
-Urban Twin’s **Cesium map** is a Vite SPA. Host it on Vercel; keep the **FastAPI** backend on a separate host (Azure VM, Railway, Render, etc.) because:
-- Cesium + static assets fit Vercel
-- Long-running ingest / Kafka / LightGBM training do **not**
+Urban Twin’s **Cesium map** is a Vite SPA. Host it on Vercel; keep the **FastAPI**
+backend on a separate host (Azure VM, Railway, Render, etc.).
+
+**Full cloud path:** [DEPLOY.md](DEPLOY.md).
 
 ## 1. Repo setup
 
-This folder is `frontend/`. From the Vercel dashboard:
+**Do not** leave the Vercel root as the GitHub repo root. The monorepo has
+`pyproject.toml` / FastAPI; Vercel will try to deploy Python and fail with
+“No FastAPI entrypoint found”.
+
+From the Vercel dashboard → **Project → Settings → General → Root Directory**:
 
 - **Root Directory:** `frontend`
 - **Framework Preset:** Vite
 - **Build Command:** `npm run build`
 - **Output Directory:** `dist`
+
+Then **Redeploy**. Prefer Root Directory `frontend` over relying on the repo-root
+`vercel.json` fallback.
 
 Or CLI:
 
@@ -20,6 +28,7 @@ cd frontend
 npx vercel
 ```
 
+
 ## 2. Environment variables (Vercel project settings)
 
 | Name | Value |
@@ -27,7 +36,7 @@ npx vercel
 | `VITE_API_BASE` | `https://your-api-host.example.com` (or `/api` if reverse-proxied) |
 | `VITE_WS_URL` | `wss://your-api-host.example.com/ws/live` |
 | `VITE_CESIUM_ION_TOKEN` | optional Cesium ion token |
-| `VITE_SUPABASE_URL` | optional — see `docs/SUPABASE.md` |
+| `VITE_SUPABASE_URL` | optional |
 | `VITE_SUPABASE_ANON_KEY` | optional |
 
 Production builds already default to same-origin `/api` + `/ws/live` when these are unset (nginx-style). On Vercel you **must** set `VITE_API_BASE` / `VITE_WS_URL` to your API host.

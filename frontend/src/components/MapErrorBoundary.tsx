@@ -35,6 +35,10 @@ export class MapErrorBoundary extends Component<Props, State> {
         </div>
       );
     }
-    return <div key={this.state.resetKey}>{this.props.children}</div>;
+    return (
+      <div className="map-root" key={this.state.resetKey}>
+        {this.props.children}
+      </div>
+    );
   }
 }

@@ -7,7 +7,11 @@ from urban_twin.config import settings
 from urban_twin.db.models import Base
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.database_url_sync)
+# ConfigParser treats % as interpolation — URL-encoded passwords use %XX
+config.set_main_option(
+    "sqlalchemy.url",
+    settings.database_url_sync.replace("%", "%%"),
+)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

@@ -17,11 +17,11 @@ export function StatusBar({
     <footer className="status-bar">
       <span className={apiOk ? "ok" : "bad"}>API</span>
       <span className={wsStatus === "open" ? "ok" : "bad"}>WS</span>
-      <span>
+      <span className="status-counts">
         {buildingCount} bld · {civicCount} civic
       </span>
       {flash && <span className="flash-pill">live</span>}
-      <span className="hint">Click to inspect · double-click to fly</span>
+      <span className="hint">Tap to inspect · pinch zoom</span>
     </footer>
   );
 }
