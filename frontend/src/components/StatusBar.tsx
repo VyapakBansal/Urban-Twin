@@ -4,6 +4,7 @@ type Props = {
   buildingCount: number;
   civicCount: number;
   flash: boolean;
+  droneStatus: string;
 };
 
 export function StatusBar({
@@ -12,11 +13,13 @@ export function StatusBar({
   buildingCount,
   civicCount,
   flash,
+  droneStatus,
 }: Props) {
   return (
     <footer className="status-bar">
       <span className={apiOk ? "ok" : "bad"}>API</span>
       <span className={wsStatus === "open" ? "ok" : "bad"}>WS</span>
+      <span className={droneStatus === "open" ? "ok" : "bad"}>DRONE</span>
       <span className="status-counts">
         {buildingCount} bld · {civicCount} civic
       </span>

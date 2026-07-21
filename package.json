@@ -12,6 +12,7 @@
     "validate": "bash -c '.venv/Scripts/python.exe -m urban_twin.forecast.main --validate \"$@\"' --",
     "ingest": "bash -c '.venv/Scripts/python.exe -m urban_twin.ingestion.main --once \"$@\"' --",
     "forecast": "bash -c '.venv/Scripts/python.exe -m urban_twin.forecast.main --once \"$@\"' --",
+    "drone": "bash -c '.venv/Scripts/python.exe -m urban_twin.drone.main \"$@\"' --",
     "frontend": "npm --prefix frontend run dev"
   }
 }

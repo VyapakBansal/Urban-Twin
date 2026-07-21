@@ -48,7 +48,7 @@ export function resolveApiBase(configured: string | undefined, isDev: boolean): 
 export function resolveWsUrl(configured: string | undefined, isDev: boolean): string {
   const fallback = isDev
     ? "ws://127.0.0.1:8001/ws/live"
-    : defaultSameOriginWs();
+    : defaultSameOriginWs("/ws/live");
   const candidate = (configured || fallback).trim();
   if (!isAllowedWsUrl(candidate)) {
     console.warn("[urban-twin] rejected VITE_WS_URL; using fallback");
@@ -57,8 +57,34 @@ export function resolveWsUrl(configured: string | undefined, isDev: boolean): st
   return candidate;
 }
 
-function defaultSameOriginWs(): string {
-  if (typeof window === "undefined") return "ws://127.0.0.1:8001/ws/live";
+export function resolveDroneWsUrl(
+  configured: string | undefined,
+  configuredLive: string | undefined,
+  isDev: boolean,
+): string {
+  const fallback = isDev
+    ? "ws://127.0.0.1:8001/ws/drone"
+    : defaultSameOriginWs("/ws/drone");
+  let derived = fallback;
+  if (configuredLive) {
+    try {
+      const live = new URL(configuredLive);
+      live.pathname = live.pathname.replace(/\/ws\/live\/?$/, "/ws/drone");
+      derived = live.toString();
+    } catch {
+      derived = fallback;
+    }
+  }
+  const candidate = (configured || derived).trim();
+  if (!isAllowedWsUrl(candidate)) {
+    console.warn("[urban-twin] rejected VITE_DRONE_WS_URL; using fallback");
+    return fallback;
+  }
+  return candidate;
+}
+
+function defaultSameOriginWs(path: string): string {
+  if (typeof window === "undefined") return `ws://127.0.0.1:8001${path}`;
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${window.location.host}/ws/live`;
+  return `${proto}://${window.location.host}${path}`;
 }

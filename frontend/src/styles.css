@@ -116,9 +116,21 @@ body,
   height: 100%;
 }
 
-.cesium-viewer-bottom,
 .cesium-viewer-toolbar {
   display: none !important;
+}
+
+/* Google/Cesium data attribution must remain visible. */
+.cesium-viewer-bottom {
+  left: max(0.75rem, env(safe-area-inset-left));
+  bottom: calc(3.15rem + env(safe-area-inset-bottom));
+  max-width: calc(100vw - 1.5rem);
+}
+
+.cesium-widget-credits {
+  padding: 0.2rem 0.35rem;
+  background: rgba(12, 16, 22, 0.72);
+  border-radius: 3px;
 }
 
 .brand-bar {
@@ -383,6 +395,91 @@ body,
   outline: none;
 }
 
+.drone-controls {
+  position: absolute;
+  left: max(0.75rem, env(safe-area-inset-left));
+  bottom: calc(3.25rem + env(safe-area-inset-bottom));
+  z-index: 11;
+  width: min(19rem, calc(100vw - 1.5rem));
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+  backdrop-filter: blur(12px);
+}
+
+.drone-controls-head,
+.drone-actions,
+.drone-camera-modes {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.drone-controls-head {
+  justify-content: space-between;
+  margin-bottom: 0.55rem;
+}
+
+.drone-controls-head .panel-title {
+  margin-bottom: 0.1rem;
+}
+
+.drone-controls-head strong,
+.drone-altitude {
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.drone-altitude {
+  color: var(--muted);
+}
+
+.drone-actions button,
+.drone-camera-modes button {
+  flex: 1;
+  min-height: 2rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink);
+  font: 600 0.66rem var(--font-sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.drone-actions button:hover:not(:disabled),
+.drone-actions button:focus-visible,
+.drone-camera-modes button:hover:not(:disabled),
+.drone-camera-modes button:focus-visible,
+.drone-camera-modes button.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.drone-actions button.is-danger {
+  color: var(--danger);
+}
+
+.drone-actions button:disabled,
+.drone-camera-modes button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.drone-key-hint {
+  margin: 0.45rem 0;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.drone-camera-modes {
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--line);
+}
+
 .select-card {
   position: absolute;
   left: 1rem;
@@ -564,6 +661,10 @@ body,
 }
 
 @media (max-width: 720px) {
+  .cesium-viewer-bottom {
+    bottom: calc(6.15rem + env(safe-area-inset-bottom));
+  }
+
   .brand {
     font-size: 1.45rem;
   }
@@ -651,6 +752,13 @@ body,
     flex: 1;
     min-height: 2.5rem;
     padding: 0.5rem 0.4rem;
+  }
+
+  .drone-controls {
+    left: max(0.75rem, env(safe-area-inset-left));
+    right: max(0.75rem, env(safe-area-inset-right));
+    bottom: calc(6.2rem + env(safe-area-inset-bottom));
+    width: auto;
   }
 
   .select-card {

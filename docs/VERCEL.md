@@ -18,8 +18,11 @@ From the Vercel dashboard → **Project → Settings → General → Root Direct
 - **Build Command:** `npm run build`
 - **Output Directory:** `dist`
 
-Then **Redeploy**. Prefer Root Directory `frontend` over relying on the repo-root
-`vercel.json` fallback.
+Leave **Install Command** empty (default `npm install`). Do not use
+`npm install --prefix frontend` once Root Directory is `frontend` — that doubles
+the path and fails with `frontend/frontend/package.json`.
+
+Then **Redeploy**.
 
 Or CLI:
 

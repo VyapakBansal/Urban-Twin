@@ -8,6 +8,20 @@ locals {
   }
 }
 
+check "drone_vm_requires_demo_host" {
+  assert {
+    condition     = !var.enable_drone_vm || var.enable_demo_vm
+    error_message = "enable_drone_vm requires enable_demo_vm so the simulator has a private bridge target."
+  }
+}
+
+check "drone_vm_requires_tested_px4_ref" {
+  assert {
+    condition     = !var.enable_drone_vm || trimspace(var.px4_git_ref) != ""
+    error_message = "Set px4_git_ref to the exact locally tested PX4 tag/commit before enabling the drone VM."
+  }
+}
+
 resource "azurerm_resource_group" "main" {
   name     = "rg-${local.name_prefix}"
   location = var.location

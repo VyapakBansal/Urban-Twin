@@ -5,7 +5,9 @@ export const HORIZONS = [1, 2, 3, 6, 12, 24, 48] as const;
 export const PREDICT_TYPES = ["temp", "river_level", "aqi_pm25"] as const;
 
 export const DEFAULT_LAYERS: LayerState = {
+  photorealistic: Boolean(import.meta.env.VITE_CESIUM_ION_TOKEN),
   buildings: true,
+  drone: true,
   live: true,
   forecast: true,
   river: true,

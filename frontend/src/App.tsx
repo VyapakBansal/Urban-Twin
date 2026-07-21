@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CesiumMap } from "./CesiumMap";
 import { BrandBar } from "./components/BrandBar";
 import { CameraToolbar } from "./components/CameraToolbar";
+import { DroneControls } from "./components/DroneControls";
 import { LayerPanel, type LayerRow } from "./components/LayerPanel";
 import { MapErrorBoundary } from "./components/MapErrorBoundary";
 import { MobileChrome } from "./components/MobileChrome";
@@ -9,11 +10,12 @@ import { SelectionCard } from "./components/SelectionCard";
 import { StatusBar } from "./components/StatusBar";
 import { useCamera } from "./hooks/useCamera";
 import { useHorizonForecasts } from "./hooks/useHorizonForecasts";
+import { useDroneTelemetry } from "./hooks/useDroneTelemetry";
 import { useSensorSnapshot } from "./hooks/useSensorSnapshot";
 import { useTheme } from "./hooks/useTheme";
 import { useTwinBootstrap } from "./hooks/useTwinBootstrap";
 import { DEFAULT_LAYERS } from "./lib/constants";
-import type { LayerState, MapSelection } from "./types";
+import type { CameraCommand, DroneCameraMode, LayerState, MapSelection } from "./types";
 
 function useIsPhone() {
   const [phone, setPhone] = useState(() =>
@@ -40,6 +42,13 @@ export default function App() {
   const [horizon, setHorizon] = useState(24);
   const [selection, setSelection] = useState<MapSelection | null>(null);
   const [layersOpen, setLayersOpen] = useState(false);
+  const [droneCameraMode, setDroneCameraMode] =
+    useState<DroneCameraMode>("free");
+  const [photorealisticStatus, setPhotorealisticStatus] = useState<
+    "loading" | "ready" | "unavailable"
+  >(
+    import.meta.env.VITE_CESIUM_ION_TOKEN ? "loading" : "unavailable",
+  );
 
   useEffect(() => {
     // Desktop: layers stay open; phone: start closed so the map is usable
@@ -55,6 +64,7 @@ export default function App() {
     layers.precip;
 
   const sensors = useSensorSnapshot(bootstrap.seed, wsEnabled);
+  const drone = useDroneTelemetry(layers.drone);
   const { forecasts, liveForecasts, predictError, predictLoading } =
     useHorizonForecasts({
       enabled: layers.forecast,
@@ -66,12 +76,49 @@ export default function App() {
     });
 
   function toggle(key: keyof LayerState) {
+    if (key === "photorealistic") {
+      const enabled = !layers.photorealistic;
+      if (enabled) setPhotorealisticStatus("loading");
+      setLayers((prev) => {
+        return {
+          ...prev,
+          photorealistic: enabled,
+          // Keep/restore OSM geometry until textured tiles finish loading.
+          buildings: true,
+        };
+      });
+      return;
+    }
+    if (key === "buildings") {
+      setLayers((prev) => {
+        const enabled = !prev.buildings;
+        return {
+          ...prev,
+          buildings: enabled,
+          photorealistic: enabled ? false : prev.photorealistic,
+        };
+      });
+      return;
+    }
     setLayers((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function handlePhotorealisticStatus(status: "loading" | "ready" | "unavailable") {
+    setPhotorealisticStatus(status);
+    if (status === "ready") {
+      setLayers((prev) => ({ ...prev, photorealistic: true, buildings: false }));
+    } else if (status === "unavailable") {
+      setLayers((prev) => ({ ...prev, photorealistic: false, buildings: true }));
+    }
   }
 
   function flyToLayer(key: keyof LayerState) {
     const { liveTemp, river, air, wind } = sensors;
     const { windGrid, incidents } = bootstrap;
+    if (key === "drone" && drone.telemetry) {
+      setDroneCameraMode("follow");
+      return;
+    }
     if (key === "live" && liveTemp) {
       runCamera({ type: "flyTo", lon: liveTemp.lon, lat: liveTemp.lat, height: 240 });
       return;
@@ -110,6 +157,11 @@ export default function App() {
     runCamera({ type: "home" });
   }
 
+  function handleCameraCommand(command: CameraCommand) {
+    setDroneCameraMode("free");
+    runCamera(command);
+  }
+
   function handleSelect(sel: MapSelection | null) {
     setSelection(sel);
     if (sel && isPhone) setLayersOpen(false);
@@ -120,9 +172,26 @@ export default function App() {
     const { liveTemp, wind, humidity, precip, river, air } = sensors;
     return [
       {
+        key: "photorealistic",
+        label: "Photorealistic",
+        meta:
+          photorealisticStatus === "ready"
+            ? "3D tiles"
+            : photorealisticStatus === "loading"
+              ? "loading…"
+              : "token needed",
+      },
+      {
         key: "buildings",
-        label: "Buildings",
+        label: "OSM Buildings",
         meta: loading ? "…" : String(buildings.length),
+      },
+      {
+        key: "drone",
+        label: "Drone",
+        meta: drone.telemetry
+          ? `${drone.telemetry.relative_altitude_m.toFixed(0)} m`
+          : drone.status,
       },
       { key: "pathways", label: "Pathways", meta: String(pathways.length) },
       { key: "amenities", label: "Places", meta: String(amenities.length) },
@@ -163,7 +232,15 @@ export default function App() {
         meta: forecasts.length ? `+${horizon}h` : "—",
       },
     ];
-  }, [bootstrap, sensors, forecasts.length, horizon]);
+  }, [
+    bootstrap,
+    sensors,
+    forecasts.length,
+    horizon,
+    photorealisticStatus,
+    drone.telemetry,
+    drone.status,
+  ]);
 
   return (
     <div className={`app-shell ${sensors.flash ? "is-live-flash" : ""}`}>
@@ -190,6 +267,10 @@ export default function App() {
           cameraCommand={cameraCommand}
           cameraCommandKey={cameraCommandKey}
           theme={theme}
+          lowPower={isPhone}
+          onPhotorealisticStatus={handlePhotorealisticStatus}
+          droneTelemetry={layers.drone ? drone.telemetry : null}
+          droneCameraMode={droneCameraMode}
         />
       </MapErrorBoundary>
 
@@ -215,7 +296,18 @@ export default function App() {
         error={bootstrap.error}
       />
 
-      <CameraToolbar onCommand={runCamera} />
+      <CameraToolbar onCommand={handleCameraCommand} />
+
+      <DroneControls
+        visible={layers.drone}
+        phone={isPhone}
+        status={drone.status}
+        telemetry={drone.telemetry}
+        controlError={drone.controlError}
+        cameraMode={droneCameraMode}
+        onCameraMode={setDroneCameraMode}
+        sendControl={drone.sendControl}
+      />
 
       {selection && (
         <SelectionCard
@@ -236,6 +328,7 @@ export default function App() {
           (bootstrap.counts?.amenities ?? bootstrap.amenities.length)
         }
         flash={sensors.flash}
+        droneStatus={drone.status}
       />
     </div>
   );

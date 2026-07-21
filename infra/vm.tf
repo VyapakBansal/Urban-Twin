@@ -117,6 +117,7 @@ resource "azurerm_linux_virtual_machine" "demo" {
     openaq_api_key      = var.openaq_api_key
     git_repo_url        = var.git_repo_url
     git_branch          = var.git_branch
+    enable_drone_bridge = var.enable_drone_bridge
   }))
 
   lifecycle {
@@ -127,6 +128,10 @@ resource "azurerm_linux_virtual_machine" "demo" {
     precondition {
       condition     = var.openweather_api_key != ""
       error_message = "openweather_api_key must be set when enable_demo_vm = true."
+    }
+    precondition {
+      condition     = can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}/32$", var.allowed_ssh_cidr)) && var.allowed_ssh_cidr != "0.0.0.0/32"
+      error_message = "allowed_ssh_cidr must be your public IP /32 (not 0.0.0.0/0) when enable_demo_vm = true."
     }
   }
 }

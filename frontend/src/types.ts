@@ -65,6 +65,44 @@ export type LiveReadingEvent = {
   reading_id?: number;
 };
 
+export type DroneTelemetryEvent = {
+  event_type: "drone.telemetry";
+  drone_id: string;
+  sequence: number;
+  recorded_at: string;
+  lat: number;
+  lon: number;
+  altitude_m: number;
+  relative_altitude_m: number;
+  north_m: number;
+  east_m: number;
+  down_m: number;
+  velocity_north_m_s: number;
+  velocity_east_m_s: number;
+  velocity_down_m_s: number;
+  roll_deg: number;
+  pitch_deg: number;
+  yaw_deg: number;
+  armed: boolean;
+  flight_mode: string;
+  source: string;
+};
+
+export type DroneControlCommand = {
+  event_type: "drone.control";
+  client_id: string;
+  sequence: number;
+  issued_at: string;
+  command: "arm" | "takeoff" | "land" | "disarm" | "velocity_body" | "hold";
+  forward_m_s?: number;
+  right_m_s?: number;
+  down_m_s?: number;
+  yaw_rate_deg_s?: number;
+  ttl_ms?: number;
+};
+
+export type DroneCameraMode = "free" | "follow" | "fpv";
+
 export type Pathway = {
   id: number;
   name: string | null;
@@ -109,7 +147,9 @@ export type WindCell = {
 };
 
 export type LayerState = {
+  photorealistic: boolean;
   buildings: boolean;
+  drone: boolean;
   live: boolean;
   forecast: boolean;
   river: boolean;

@@ -43,3 +43,28 @@ output "bootstrap_log_hint" {
     null,
   )
 }
+
+output "enable_drone_vm" {
+  value = var.enable_drone_vm
+}
+
+output "drone_vm_public_ip" {
+  description = "Public IP of the disposable simulator (null when disabled)."
+  value       = try(azurerm_public_ip.drone[0].ip_address, null)
+}
+
+output "drone_vm_ssh_command" {
+  description = "SSH into the optional PX4/Gazebo VM."
+  value = try(
+    "ssh ${var.admin_username}@${azurerm_public_ip.drone[0].ip_address}",
+    null,
+  )
+}
+
+output "drone_vm_stop_command" {
+  description = "Immediate cost-control command for the optional simulator."
+  value = try(
+    "az vm deallocate --resource-group ${azurerm_resource_group.main.name} --name ${azurerm_linux_virtual_machine.drone[0].name}",
+    null,
+  )
+}

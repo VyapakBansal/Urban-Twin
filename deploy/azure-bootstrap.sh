@@ -100,6 +100,14 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
+log "ensuring Kafka topics"
+for topic in sensor.readings forecasts.generated drone.telemetry drone.control; do
+  docker compose -f "$APP_DIR/deploy/docker-compose.azure.yml" exec -T kafka \
+    /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+    --create --if-not-exists --topic "$topic" \
+    --partitions 1 --replication-factor 1 >/dev/null
+done
+
 log "waiting for kafka"
 for i in $(seq 1 60); do
   if docker compose -f "$APP_DIR/deploy/docker-compose.azure.yml" exec -T kafka \
@@ -152,7 +160,7 @@ start_bg() {
 }
 
 # stop old processes if re-running
-for name in api ws ingest forecast; do
+for name in api ws ingest forecast drone; do
   if [[ -f "$PID_DIR/$name.pid" ]]; then
     kill "$(cat "$PID_DIR/$name.pid")" 2>/dev/null || true
     rm -f "$PID_DIR/$name.pid"
@@ -163,6 +171,9 @@ start_bg api "$PY" -m urban_twin.api.main
 start_bg ws "$PY" -m urban_twin.websocket_bridge.main
 start_bg ingest "$PY" -m urban_twin.ingestion.main
 start_bg forecast "$PY" -m urban_twin.forecast.main --model gbr
+if grep -qi '^ENABLE_DRONE_BRIDGE=true$' "$APP_DIR/.env"; then
+  start_bg drone "$PY" -m urban_twin.drone.main
+fi
 
 sleep 3
 log "one-shot ingest + forecast"

@@ -1,17 +1,25 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Cartesian2,
   Cartesian3,
+  Cesium3DTileset,
   Color,
+  ConstantPositionProperty,
+  ConstantProperty,
+  createGooglePhotorealistic3DTileset,
+  Credit,
   defined,
   EllipsoidTerrainProvider,
   Entity,
+  HeadingPitchRoll,
   Ion,
+  Matrix4,
   Rectangle,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
   UrlTemplateImageryProvider,
   Viewer,
+  Transforms,
   Math as CesiumMath,
 } from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
@@ -20,6 +28,8 @@ import type {
   Amenity,
   Building,
   CameraCommand,
+  DroneCameraMode,
+  DroneTelemetryEvent,
   Forecast,
   Incident,
   LayerState,
@@ -59,6 +69,10 @@ type Props = {
   cameraCommand: CameraCommand | null;
   cameraCommandKey: number;
   theme: "dark" | "light";
+  lowPower: boolean;
+  onPhotorealisticStatus: (status: "loading" | "ready" | "unavailable") => void;
+  droneTelemetry: DroneTelemetryEvent | null;
+  droneCameraMode: DroneCameraMode;
 };
 
 function heightForBuilding(b: Building): number {
@@ -197,7 +211,7 @@ function applyBasemap(viewer: Viewer, theme: "dark" | "light") {
   viewer.imageryLayers.addImageryProvider(
     new UrlTemplateImageryProvider({
       url,
-      credit: "© OSM © CARTO",
+      credit: new Credit("© OpenStreetMap contributors © CARTO", true),
     }),
   );
   const bg = theme === "light" ? "#e8e4dc" : "#0b0f14";
@@ -227,11 +241,20 @@ export function CesiumMap({
   cameraCommand,
   cameraCommandKey,
   theme,
+  lowPower,
+  onPhotorealisticStatus,
+  droneTelemetry,
+  droneCameraMode,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
+  const photorealisticRef = useRef<Cesium3DTileset | null>(null);
+  const photorealisticLoadingRef = useRef(false);
+  const droneEntityRef = useRef<Entity | null>(null);
   const themeRef = useRef(theme);
   themeRef.current = theme;
+  const onPhotorealisticStatusRef = useRef(onPhotorealisticStatus);
+  onPhotorealisticStatusRef.current = onPhotorealisticStatus;
   const ids = useRef<Record<string, string[]>>({
     buildings: [],
     pathways: [],
@@ -366,10 +389,218 @@ export function CesiumMap({
       handler.destroy();
       viewer.destroy();
       viewerRef.current = null;
+      photorealisticRef.current = null;
+      photorealisticLoadingRef.current = false;
       didFly.current = false;
       metaRef.current.clear();
     };
   }, []);
+
+  // Google tiles ship baked real-world lighting and their own terrain, so the
+  // globe/basemap is hidden and Cesium lighting/shadows/post-FX stay OFF —
+  // stacking them on the tiles causes striping and a washed-out picture.
+  const [photoActive, setPhotoActive] = useState(false);
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.scene.globe.show = !photoActive;
+    if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = photoActive;
+    viewer.shadows = false;
+    viewer.scene.postProcessStages.ambientOcclusion.enabled = false;
+    viewer.scene.postProcessStages.bloom.enabled = false;
+    // Fog washes out distant tiles; the imagery baked into them already fades.
+    viewer.scene.fog.enabled = !photoActive;
+    viewer.scene.fog.density = 0.00035;
+    // Render at native device resolution + MSAA for crisp tiles.
+    viewer.useBrowserRecommendedResolution = !(photoActive && !lowPower);
+    viewer.scene.msaaSamples = photoActive && !lowPower ? 4 : 1;
+    const tileset = photorealisticRef.current;
+    if (tileset) {
+      // Conserve tile quota: default-quality SSE, distance-based detail decay,
+      // no speculative preloading, and a large cache to avoid re-fetching.
+      tileset.maximumScreenSpaceError = lowPower ? 32 : 16;
+      tileset.dynamicScreenSpaceError = true;
+      tileset.skipLevelOfDetail = true;
+      tileset.preloadWhenHidden = false;
+      tileset.preloadFlightDestinations = false;
+      tileset.cacheBytes = 512 * 1024 * 1024;
+      tileset.maximumCacheOverflowBytes = 256 * 1024 * 1024;
+    }
+    // Let the camera get close to street level on textured tiles, but not
+    // zoom out far enough to stream the whole city.
+    viewer.scene.screenSpaceCameraController.minimumZoomDistance = photoActive ? 15 : 80;
+    viewer.scene.screenSpaceCameraController.maximumZoomDistance = photoActive
+      ? 4000
+      : 12000;
+    viewer.scene.requestRender();
+  }, [photoActive, lowPower]);
+
+  // Keep the camera inside the AOI while photorealistic tiles are active so
+  // only the neighborhood is streamed (each tile request costs quota).
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !photoActive) return;
+    const MARGIN = 0.012;
+    const MAX_CAMERA_HEIGHT = 3200; // ellipsoid height; Kensington ground ≈ 1030 m
+    const clampToAoi = () => {
+      const carto = viewer.camera.positionCartographic;
+      const lon = CesiumMath.toDegrees(carto.longitude);
+      const lat = CesiumMath.toDegrees(carto.latitude);
+      const clampedLon = Math.min(Math.max(lon, AOI.west - MARGIN), AOI.east + MARGIN);
+      const clampedLat = Math.min(Math.max(lat, AOI.south - MARGIN), AOI.north + MARGIN);
+      const clampedHeight = Math.min(carto.height, MAX_CAMERA_HEIGHT);
+      if (clampedLon === lon && clampedLat === lat && clampedHeight === carto.height) {
+        return;
+      }
+      viewer.camera.setView({
+        destination: Cartesian3.fromDegrees(clampedLon, clampedLat, clampedHeight),
+        orientation: {
+          heading: viewer.camera.heading,
+          pitch: viewer.camera.pitch,
+          roll: viewer.camera.roll,
+        },
+      });
+    };
+    viewer.camera.moveEnd.addEventListener(clampToAoi);
+    clampToAoi();
+    return () => {
+      viewer.camera.moveEnd.removeEventListener(clampToAoi);
+    };
+  }, [photoActive]);
+
+  // Google Photorealistic 3D Tiles are the textured-building source. OSM
+  // extrusions remain visible until this resolves, and are restored on error.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+
+    if (!layers.photorealistic) {
+      if (photorealisticRef.current) photorealisticRef.current.show = false;
+      setPhotoActive(false);
+      return;
+    }
+    if (!ION) {
+      onPhotorealisticStatusRef.current("unavailable");
+      setPhotoActive(false);
+      return;
+    }
+    if (photorealisticRef.current) {
+      photorealisticRef.current.show = true;
+      onPhotorealisticStatusRef.current("ready");
+      setPhotoActive(true);
+      return;
+    }
+    if (photorealisticLoadingRef.current) return;
+
+    photorealisticLoadingRef.current = true;
+    onPhotorealisticStatusRef.current("loading");
+    void createGooglePhotorealistic3DTileset()
+      .then((tileset) => {
+        if (viewer.isDestroyed()) {
+          tileset.destroy();
+          return;
+        }
+        viewer.scene.primitives.add(tileset);
+        photorealisticRef.current = tileset;
+        photorealisticLoadingRef.current = false;
+        onPhotorealisticStatusRef.current("ready");
+        setPhotoActive(true);
+        viewer.scene.requestRender();
+      })
+      .catch((error: unknown) => {
+        photorealisticLoadingRef.current = false;
+        console.warn(
+          "Google Photorealistic 3D Tiles unavailable; restoring OSM buildings.",
+          error,
+        );
+        onPhotorealisticStatusRef.current("unavailable");
+        setPhotoActive(false);
+      });
+  }, [layers.photorealistic]);
+
+  // One persistent drone entity: update properties in place at telemetry rate.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    if (!droneTelemetry || !layers.drone) {
+      if (droneEntityRef.current) droneEntityRef.current.show = false;
+      return;
+    }
+
+    const position = Cartesian3.fromDegrees(
+      droneTelemetry.lon,
+      droneTelemetry.lat,
+      droneTelemetry.altitude_m,
+    );
+    const attitude = new HeadingPitchRoll(
+      CesiumMath.toRadians(droneTelemetry.yaw_deg),
+      CesiumMath.toRadians(droneTelemetry.pitch_deg),
+      CesiumMath.toRadians(droneTelemetry.roll_deg),
+    );
+    const orientation = Transforms.headingPitchRollQuaternion(position, attitude);
+
+    if (!droneEntityRef.current) {
+      droneEntityRef.current = viewer.entities.add({
+        id: "live-drone",
+        position,
+        orientation,
+        box: {
+          dimensions: new Cartesian3(1.1, 0.7, 0.22),
+          material: Color.fromCssColorString("#f59e0b").withAlpha(0.92),
+          outline: true,
+          outlineColor: Color.WHITE.withAlpha(0.8),
+        },
+        point: {
+          pixelSize: 8,
+          color: Color.fromCssColorString("#f59e0b"),
+          outlineColor: Color.WHITE,
+          outlineWidth: 2,
+          disableDepthTestDistance: 800,
+        },
+      });
+    } else {
+      droneEntityRef.current.show = true;
+      droneEntityRef.current.position = new ConstantPositionProperty(position);
+      droneEntityRef.current.orientation = new ConstantProperty(orientation);
+    }
+
+    if (droneCameraMode === "fpv") {
+      viewer.camera.setView({
+        destination: Cartesian3.fromDegrees(
+          droneTelemetry.lon,
+          droneTelemetry.lat,
+          droneTelemetry.altitude_m + 0.25,
+        ),
+        orientation: {
+          heading: attitude.heading,
+          pitch: attitude.pitch,
+          roll: attitude.roll,
+        },
+      });
+    } else if (droneCameraMode === "follow") {
+      const range = 55;
+      const localOffset = new Cartesian3(
+        -Math.sin(attitude.heading) * range,
+        -Math.cos(attitude.heading) * range,
+        22,
+      );
+      const frame = Transforms.eastNorthUpToFixedFrame(position);
+      const destination = Matrix4.multiplyByPoint(
+        frame,
+        localOffset,
+        new Cartesian3(),
+      );
+      viewer.camera.setView({
+        destination,
+        orientation: {
+          heading: attitude.heading,
+          pitch: CesiumMath.toRadians(-22),
+          roll: 0,
+        },
+      });
+    }
+    viewer.scene.requestRender();
+  }, [droneTelemetry, droneCameraMode, layers.drone]);
 
   // Camera commands from toolbar / layer panel
   useEffect(() => {

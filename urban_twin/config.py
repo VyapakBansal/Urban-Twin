@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_topic_sensor_readings: str = "sensor.readings"
     kafka_topic_forecasts: str = "forecasts.generated"
+    kafka_topic_drone_telemetry: str = "drone.telemetry"
+    kafka_topic_drone_control: str = "drone.control"
 
     api_host: str = "127.0.0.1"
     api_port: int = 8000
@@ -36,6 +38,21 @@ class Settings(BaseSettings):
 
     ws_bridge_host: str = "127.0.0.1"
     ws_bridge_port: int = 8001
+
+    # PX4 / MAVSDK drone bridge. The fixed home anchors PX4 local NED to WGS84.
+    drone_system_address: str = "udp://:14540"
+    drone_id: str = "px4-sitl-1"
+    drone_home_lat: float = 51.053
+    drone_home_lon: float = -114.081
+    drone_home_alt_m: float = 1045.0
+    drone_telemetry_hz: float = 20.0
+    drone_control_hz: float = 20.0
+    drone_command_timeout_sec: float = 0.5
+    drone_max_horizontal_speed_m_s: float = 5.0
+    drone_max_vertical_speed_m_s: float = 2.0
+    drone_max_yaw_rate_deg_s: float = 60.0
+    drone_min_altitude_m: float = 2.0
+    drone_max_altitude_m: float = 120.0
 
     forecast_horizon_hours: int = 24
     forecast_horizons: str = "1,2,3,6,12,24,48"

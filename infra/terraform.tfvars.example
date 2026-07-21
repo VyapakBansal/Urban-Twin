@@ -14,11 +14,25 @@ budget_contact_emails = ["you@example.com"]
 enable_demo_vm = false
 vm_size        = "Standard_B2s"
 
+# Drone bridge adds no VM cost. To stream from your Linux laptop, set its
+# current public IP /32 here and keep enable_drone_vm=false.
+enable_drone_bridge       = false
+drone_mavlink_source_cidr = ""
+
+# OPTIONAL SECOND COST SWITCH — disposable PX4/Gazebo compute.
+# Keep false unless the local flythrough is accepted and a fresh plan is approved.
+enable_drone_vm            = false
+drone_vm_size              = "Standard_D4as_v5"
+drone_vm_spot              = true
+drone_vm_auto_shutdown_time = "0200"
+px4_git_ref                = "" # exact locally tested tag/commit, required when enabled
+drone_sim_autostart        = false
+
 admin_username = "urbanadmin"
 # Paste contents of ~/.ssh/id_ed25519.pub
 ssh_public_key = ""
-# Restrict SSH to your IP, e.g. "203.0.113.10/32"
-allowed_ssh_cidr = "0.0.0.0/0"
+# Required as your public IP /32 whenever a VM is enabled (open CIDRs are rejected).
+allowed_ssh_cidr = "203.0.113.10/32"
 
 git_repo_url = "https://github.com/VyapakBansal/Urban-Twin.git"
 git_branch   = "main"

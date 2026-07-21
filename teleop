@@ -1,16 +1,30 @@
 import asyncio
+import threading
+
 from mavsdk import System
 from mavsdk.offboard import OffboardError, VelocityBodyYawspeed
 from pynput import keyboard
 
-# Speed settings
+# Body-frame FRD: +x forward, +y right, +z down.
 FORWARD_SPEED = 2.0  # m/s
-YAW_SPEED = 30.0     # deg/s
-Z_SPEED = 0.5        # m/s
+STRAFE_SPEED = 2.0  # m/s
+Z_SPEED = 0.5  # m/s; negative climbs
 
-vx, vy, vz, yaw = 0.0, 0.0, 0.0, 0.0
+pressed: set[str] = set()
+pressed_lock = threading.Lock()
 
-async def run():
+
+def velocity_command() -> VelocityBodyYawspeed:
+    """WASD translation + QE altitude; yaw stays zero."""
+    with pressed_lock:
+        keys = set(pressed)
+    forward = FORWARD_SPEED * (("w" in keys) - ("s" in keys))
+    right = STRAFE_SPEED * (("d" in keys) - ("a" in keys))
+    down = Z_SPEED * (("e" in keys) - ("q" in keys))
+    return VelocityBodyYawspeed(forward, right, down, 0.0)
+
+
+async def run() -> None:
     drone = System()
     await drone.connect(system_address="udp://:14540")
 
@@ -20,45 +34,87 @@ async def run():
             print("Drone connected!")
             break
 
+    print("Waiting for PX4 to become armable...")
+    async for health in drone.telemetry.health():
+        if health.is_armable:
+            break
+
+    armed = False
+    offboard_started = False
+    listener: keyboard.Listener | None = None
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
     print("Arming and taking off...")
-    await drone.action.arm()
-    await drone.action.takeoff()
-    await asyncio.sleep(5)
-
-    print("-- Setting initial Offboard velocity command")
-    await drone.offboard.set_velocity_body(VelocityBodyYawspeed(0, 0, 0, 0))
-
     try:
+        await drone.action.arm()
+        armed = True
+        await drone.action.takeoff()
+        await asyncio.sleep(5)
+
+        # PX4 requires a setpoint before entering Offboard mode.
+        await drone.offboard.set_velocity_body(VelocityBodyYawspeed(0, 0, 0, 0))
         await drone.offboard.start()
-        print("Offboard mode started. Use WASD / Arrow keys!")
+        offboard_started = True
+        print("Offboard started: WASD move, Q up, E down, Esc lands.")
+
+        def key_name(key: keyboard.Key | keyboard.KeyCode) -> str | None:
+            if key == keyboard.Key.up:
+                return "w"
+            if key == keyboard.Key.down:
+                return "s"
+            if key == keyboard.Key.left:
+                return "a"
+            if key == keyboard.Key.right:
+                return "d"
+            return (
+                key.char.lower()
+                if isinstance(key, keyboard.KeyCode) and key.char
+                else None
+            )
+
+        def on_press(key: keyboard.Key | keyboard.KeyCode) -> bool | None:
+            if key == keyboard.Key.esc:
+                loop.call_soon_threadsafe(stop.set)
+                return False
+            name = key_name(key)
+            if name in {"w", "s", "a", "d", "q", "e"}:
+                with pressed_lock:
+                    pressed.add(name)
+            return None
+
+        def on_release(key: keyboard.Key | keyboard.KeyCode) -> None:
+            name = key_name(key)
+            if name:
+                with pressed_lock:
+                    pressed.discard(name)
+
+        listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+        listener.start()
+
+        while not stop.is_set():
+            # Keep streaming at 20 Hz; zero velocity is still a valid heartbeat.
+            await drone.offboard.set_velocity_body(velocity_command())
+            await asyncio.sleep(0.05)
     except OffboardError as error:
-        print(f"Offboard start failed: {error._result.reason}")
-        return
+        print(f"Offboard command failed: {error._result.reason}")
+    finally:
+        if listener:
+            listener.stop()
+        with pressed_lock:
+            pressed.clear()
+        if offboard_started:
+            try:
+                await drone.offboard.stop()
+            except OffboardError:
+                pass
+        if armed:
+            print("Landing...")
+            await drone.action.land()
 
-    def on_press(key):
-        global vx, vy, vz, yaw
-        try:
-            if key.char == 'w': vx = FORWARD_SPEED
-            elif key.char == 's': vx = -FORWARD_SPEED
-            elif key.char == 'a': yaw = -YAW_SPEED
-            elif key.char == 'd': yaw = YAW_SPEED
-            elif key.char == 'q': vz = -Z_SPEED  # Ascend
-            elif key.char == 'e': vz = Z_SPEED   # Descend
-        except AttributeError:
-            pass
-
-    def on_release(key):
-        global vx, vy, vz, yaw
-        vx, vy, vz, yaw = 0.0, 0.0, 0.0, 0.0
-
-    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-    listener.start()
-
-    while True:
-        await drone.offboard.set_velocity_body(
-            VelocityBodyYawspeed(vx, vy, vz, yaw)
-        )
-        await asyncio.sleep(0.05)
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        pass

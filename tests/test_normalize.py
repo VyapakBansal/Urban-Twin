@@ -25,12 +25,14 @@ def test_normalize_openweather_current_all_types():
         ReadingType.TEMP,
         ReadingType.HUMIDITY,
         ReadingType.WIND,
+        ReadingType.WIND_DIR,
         ReadingType.PRECIP,
     }
     assert by_type[ReadingType.TEMP].value == 22.5
     assert by_type[ReadingType.TEMP].unit == "C"
     assert by_type[ReadingType.HUMIDITY].value == 40
     assert by_type[ReadingType.WIND].value == 3.1
+    assert by_type[ReadingType.WIND_DIR].value == 180
     assert by_type[ReadingType.PRECIP].value == 0.2
 
 

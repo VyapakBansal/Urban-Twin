@@ -10,7 +10,7 @@ import type {
   Reading,
   WindCell,
 } from "./types";
-import { resolveApiBase, resolveWsUrl } from "./lib/origins";
+import { resolveApiBase, resolveDroneWsUrl, resolveWsUrl } from "./lib/origins";
 
 /** Dev: local API. Prod (nginx): same-origin `/api` + `/ws`. */
 export const API_BASE = resolveApiBase(
@@ -19,6 +19,12 @@ export const API_BASE = resolveApiBase(
 );
 
 export const WS_URL = resolveWsUrl(
+  import.meta.env.VITE_WS_URL,
+  import.meta.env.DEV,
+);
+
+export const DRONE_WS_URL = resolveDroneWsUrl(
+  import.meta.env.VITE_DRONE_WS_URL,
   import.meta.env.VITE_WS_URL,
   import.meta.env.DEV,
 );
@@ -53,6 +59,13 @@ async function getJson<T>(path: string, opts: GetOpts = {}): Promise<T> {
   });
   if (!res.ok) {
     throw new Error(`Request failed (${res.status})`);
+  }
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    throw new Error(
+      `API returned non-JSON from ${API_BASE}${path} (got ${ct || "unknown"}). ` +
+        `Use local Vite (http://127.0.0.1:5173) with the API on :8000, or set VITE_API_BASE on Vercel.`,
+    );
   }
   return res.json() as Promise<T>;
 }

@@ -148,6 +148,14 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
+echo "==> Ensuring Kafka topics"
+for topic in sensor.readings forecasts.generated drone.telemetry drone.control; do
+  docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server localhost:9092 \
+    --create --if-not-exists \
+    --topic "$topic" --partitions 1 --replication-factor 1 >/dev/null
+done
+
 # --- schema / seed ---
 echo "==> Migrations + AOI seed"
 "$PY" -m alembic upgrade head
