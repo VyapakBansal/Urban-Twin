@@ -115,6 +115,8 @@ This is the highest-value technical addition in this change, and the part most w
 - Flight envelope constraints (max altitude, geofence around the AOI) are enforced in the telemetry bridge, not just assumed — the drone shouldn't be flyable somewhere nonsensical relative to the buildings/terrain data
 - Google's Photorealistic 3D Tiles require attribution (Google logo + data-attribution text in the Cesium credit display) — a Terms of Service requirement, not optional UI chrome
 
+**Implementation docs (local):** [docs/DRONE.md](docs/DRONE.md) (setup on any machine), [docs/DRONE_TROUBLESHOOTING.md](docs/DRONE_TROUBLESHOOTING.md) (error catalog).
+
 ---
 
 ## 7. Visual fidelity changes (frontend only, no backend impact)

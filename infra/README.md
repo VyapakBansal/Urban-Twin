@@ -118,6 +118,20 @@ Portal backup: delete resource group `rg-urbantwin-demo`.
 | `outputs.tf` | URLs / SSH |
 | `../deploy/*` | nginx, compose, bootstrap script, cloud-init template |
 
+## Optional drone simulator VM
+
+Defaults keep all drone compute **off** (`enable_drone_bridge = false`, `enable_drone_vm = false` in `terraform.tfvars.example`).
+
+| Variable | Purpose |
+|---|---|
+| `enable_drone_bridge` | NSG rule + bridge env on demo VM for inbound MAVLink |
+| `drone_mavlink_source_cidr` | Your laptop public IP `/32` allowed to send UDP 14540 |
+| `enable_drone_vm` | Separate Spot VM for headless PX4 (requires `enable_demo_vm`) |
+| `px4_git_ref` | Exact PX4 tag/commit — required before enabling drone VM |
+| `drone_sim_autostart` | Default `false`; manual start on SSH |
+
+**Recommended path:** run Gazebo on your laptop and enable only the bridge on the demo VM. Local setup and errors: [docs/DRONE.md](../docs/DRONE.md), [docs/DRONE_TROUBLESHOOTING.md](../docs/DRONE_TROUBLESHOOTING.md).
+
 ## Troubleshooting
 
 | Symptom | Check |
@@ -127,3 +141,4 @@ Portal backup: delete resource group `rg-urbantwin-demo`.
 | Map 502 / empty | Bootstrap still running — watch `/var/log/urban-twin-bootstrap.log` |
 | Weather missing | `openweather_api_key` empty in tfvars / `/etc/urban-twin.env` on VM |
 | Unexpected cost | Destroy RG; confirm no leftover disks/IPs in Portal |
+| Drone VM plan errors | See `infra/variables.tf` checks and [DRONE_TROUBLESHOOTING.md](../docs/DRONE_TROUBLESHOOTING.md#8-azure--terraform-optional-cloud-sim) |

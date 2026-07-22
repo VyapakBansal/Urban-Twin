@@ -10,6 +10,8 @@ Live weather, Bow River levels, air quality, pathways, traffic incidents, OSM bu
 |---|---|
 | [PRD.md](PRD.md) | Product requirements |
 | [SECURITY.md](SECURITY.md) | STRIDE / OWASP notes |
+| [docs/DRONE.md](docs/DRONE.md) | PX4/Gazebo local setup and flythrough |
+| [docs/DRONE_TROUBLESHOOTING.md](docs/DRONE_TROUBLESHOOTING.md) | Drone error catalog and fixes |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | Supabase → API host → Vercel |
 | [infra/README.md](infra/README.md) | Azure + Terraform |
 | [docs/VERCEL.md](docs/VERCEL.md) | Frontend hosting on Vercel |
@@ -30,6 +32,8 @@ Live weather, Bow River levels, air quality, pathways, traffic incidents, OSM bu
 
 The map is interactive: click features for details, double-click to fly, toggle layers, light/dark theme.
 
+**Drone (optional):** PX4 SITL in Gazebo streams live telemetry through Kafka/WebSocket; fly with WASDQE from the browser over Kensington. See [docs/DRONE.md](docs/DRONE.md).
+
 **Real-time note:** the pipeline pushes updates to the browser within seconds of an ingest. Upstream APIs typically refresh on the order of minutes.
 
 ---
@@ -41,6 +45,8 @@ The map is interactive: click features for details, double-click to fly, toggle 
 - Node.js **18+**
 - Free [OpenWeather](https://openweathermap.org/api) API key
 - Git
+
+**Drone flythrough (optional):** WSL2 + Ubuntu on Windows, or native Linux; one-time [PX4 install](docs/DRONE.md#one-time-px4-install) in WSL/Linux (~10–20 min first build).
 
 ---
 
@@ -74,8 +80,21 @@ Open **http://127.0.0.1:5173**.
 | `npm run validate` | Forecast metrics |
 | `npm run train` | Train LightGBM models (~10–30 min for full 5y run) |
 | `npm run frontend` | Vite only |
+| `npm run drone` | PX4/Gazebo (WSL2) + MAVSDK bridge |
+| `npm run drone:bridge` | Bridge only (PX4 already running) |
+| `npm run drone:sim` | PX4/Gazebo only |
 
 First run may import OSM buildings and train models. Logs: `.run/logs/`.
+
+### Drone flythrough (second terminal)
+
+After `npm run dev`, in another terminal:
+
+```bash
+npm run drone
+```
+
+Hard-refresh the map, enable the **Drone** layer, **Arm** → **Take off**, then WASDQE on desktop. Full platform steps, MAVLink relay, and altitude notes: [docs/DRONE.md](docs/DRONE.md). If anything fails: [docs/DRONE_TROUBLESHOOTING.md](docs/DRONE_TROUBLESHOOTING.md).
 
 ### API examples
 
@@ -113,11 +132,12 @@ Default: LightGBM multi-horizon (`lgbm-mh-v1`) on ~5 years of hourly history. Ar
         │
         ├──────────────────┐
         ▼                  ▼
- ┌─────────────┐   ┌──────────────────┐
- │ Forecast    │   │ WebSocket bridge │
- │ LightGBM MH │   │ → /ws/live       │
- └─────────────┘   └──────────────────┘
-        │
+ ┌─────────────┐   ┌──────────────────────────┐
+ │ Forecast    │   │ WebSocket bridge         │
+ │ LightGBM MH │   │ → /ws/live  → /ws/drone  │
+ └─────────────┘   └──────────────────────────┘
+        │                      ▲
+        │            PX4 SITL ─┘ MAVLink (optional)
         ▼
  FastAPI (:8000)  +  Cesium twin (:5173)
 ```
@@ -127,7 +147,8 @@ Default: LightGBM multi-horizon (`lgbm-mh-v1`) on ~5 years of hourly history. Ar
 | PostGIS | `localhost:5433` |
 | Kafka (KRaft) | `localhost:9092` |
 | FastAPI | `localhost:8000` |
-| WebSocket bridge | `localhost:8001` `/ws/live` |
+| WebSocket bridge | `localhost:8001` `/ws/live`, `/ws/drone` |
+| PX4 Offboard API | UDP `14540` (sim in WSL2 on Windows) |
 | Vite | `localhost:5173` |
 
 Kafka and Terraform are included so the project exercises event streaming and infrastructure-as-code on a real system; this neighbourhood’s volume alone would not require either.
@@ -141,8 +162,8 @@ urban_twin/     Python: ingest, API, WebSocket, forecast
 frontend/       React + Cesium
 deploy/         Azure nginx + VM bootstrap
 infra/          Terraform (Azure demo VM)
-docs/           Supabase + Vercel guides
-scripts/        npm up / down helpers
+docs/           Deploy, drone setup, troubleshooting
+scripts/        up / down / px4-sitl / mavlink-relay
 alembic/        DB migrations
 docker-compose.yml
 ```
@@ -162,6 +183,8 @@ Copy [.env.example](.env.example) → `.env`. Do not commit `.env`.
 | `FORECAST_TRAIN_DAYS` | Default `1826` (~5 years) |
 | `CORS_ORIGINS` | Allowed browser origins |
 | `DATABASE_URL` | Local Docker or Supabase |
+| `DRONE_SYSTEM_ADDRESS` | MAVSDK bind, e.g. `udpin://0.0.0.0:14540` |
+| `DRONE_HOME_*` | PX4 home origin (must match sim) — see [docs/DRONE.md](docs/DRONE.md) |
 
 ---
 
@@ -205,6 +228,7 @@ Details: [infra/README.md](infra/README.md).
 |---|---|
 | PostGIS + multi-source ingest + Kafka + WebSocket | Done |
 | Cesium twin (layers, inspect, light/dark) | Done |
+| PX4 SITL + browser WASDQE control (local) | Done |
 | LightGBM multi-horizon + `/predict` API | Done |
 | Azure Terraform bootstrap | Ready |
 | Supabase + Vercel guides | Ready |

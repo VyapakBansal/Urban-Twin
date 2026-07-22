@@ -10,6 +10,8 @@ Urban Twin splits into three pieces:
 
 Kafka stays optional for cloud demos: you can run ingest on a schedule writing to Supabase and serve REST from the API host; live WebSocket needs a persistent process.
 
+**Drone simulation** is designed for **local** use (PX4 in WSL2 + MAVSDK bridge). A Vercel-hosted map does not include `/ws/drone` unless you deploy the WebSocket bridge with `wss://…/ws/drone` and optional cloud sim — see [DRONE.md](DRONE.md) and [infra/README.md](../infra/README.md).
+
 ---
 
 ## Phase A — Supabase (database)
