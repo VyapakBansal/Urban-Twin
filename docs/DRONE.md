@@ -16,9 +16,26 @@ QGroundControl can remain connected to PX4 on its normal UDP 14550 link.
 Do not run the standalone `teleop` script and the Urban Twin drone bridge at
 the same time; both would compete for Offboard control.
 
-## 1. Start PX4 at the fixed Kensington origin
+## 1. One-time PX4 setup (WSL2)
 
-On the Linux simulator:
+PX4 stays outside this repo. In WSL2:
+
+```bash
+sudo apt update && sudo apt install -y build-essential git wget curl lsb-release ca-certificates gnupg
+git clone https://github.com/PX4/PX4-Autopilot.git --recursive ~/PX4-Autopilot
+cd ~/PX4-Autopilot
+bash ./Tools/setup/ubuntu.sh --no-nuttx
+```
+
+Use the exact PX4 target that already works on your laptop if it differs from
+`gz_x500`. Confirm arm, takeoff, movement, and landing in QGroundControl first.
+
+## 2. Start PX4 at the fixed Kensington origin
+
+**Recommended (Windows + WSL2):** `npm run drone` starts PX4/Gazebo in WSL2,
+waits for readiness, then runs the MAVSDK bridge.
+
+Manual start inside WSL2:
 
 ```bash
 cd ~/PX4-Autopilot
@@ -28,14 +45,17 @@ PX4_HOME_ALT=1045.0 \
 make px4_sitl gz_x500
 ```
 
-Use the exact PX4 target that already works on your laptop if it differs from
-`gz_x500`. Confirm arm, takeoff, movement, and landing in QGroundControl first.
+Or from the repo (WSL2 path to the project):
+
+```bash
+bash scripts/px4-sitl.sh
+```
 
 `DRONE_HOME_ALT_M` is WGS84 ellipsoid height. If the Cesium vehicle is
 consistently above or below the textured ground, calibrate this one value;
 do not add an arbitrary offset in the frontend.
 
-## 2. Route MAVLink to Urban Twin
+## 3. Route MAVLink to Urban Twin
 
 Same machine/WSL: PX4 normally sends the Offboard API stream to
 `127.0.0.1:14540`, matching the default `DRONE_SYSTEM_ADDRESS=udp://:14540`.
@@ -49,14 +69,25 @@ mavlink start -x -u 14581 -r 4000000 -f -m onboard -o 14540 -t <WINDOWS_LAN_IP>
 
 Verify with `mavlink status`. Keep both machines on a trusted private LAN.
 
-## 3. Start the local stack and bridge
+## 4. Start the local stack and bridge
 
-Windows:
+Windows — two terminals:
 
 ```bash
 npm run dev
 npm run drone
 ```
+
+`npm run drone` launches PX4 + Gazebo in WSL2, then starts the bridge. Useful
+variants:
+
+| Command | Purpose |
+|---|---|
+| `npm run drone` | WSL2 sim + bridge (default) |
+| `npm run drone:bridge` | Bridge only (`PX4` already running) |
+| `npm run drone:sim` | WSL2 sim only (no bridge) |
+
+PX4 logs: `.run/logs/px4-sitl.log`. Stop sim + stack with `npm run down`.
 
 The drone process waits safely if PX4 is not connected. Expected path:
 
@@ -65,7 +96,7 @@ PX4 -> drone.telemetry -> /ws/drone -> Cesium
 browser -> /ws/drone -> drone.control -> PX4
 ```
 
-## 4. Browser operation
+## 5. Browser operation
 
 1. Wait for the Drone panel to show a PX4 flight mode.
 2. Select **Arm**, then **Take off**.

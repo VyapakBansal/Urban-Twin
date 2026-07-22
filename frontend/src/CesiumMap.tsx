@@ -9,6 +9,7 @@ import {
   createGooglePhotorealistic3DTileset,
   Credit,
   defined,
+  Ellipsoid,
   EllipsoidTerrainProvider,
   Entity,
   HeadingPitchRoll,
@@ -17,6 +18,7 @@ import {
   Rectangle,
   ScreenSpaceEventHandler,
   ScreenSpaceEventType,
+  HeightReference,
   UrlTemplateImageryProvider,
   Viewer,
   Transforms,
@@ -43,7 +45,13 @@ const ION = import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined;
 if (ION) Ion.defaultAccessToken = ION;
 
 const CENTER = { lon: -114.081, lat: 51.053 };
+/** 1024 Memorial Drive NW, Calgary, AB T2N 3E1 — home / street-view target */
+const HOME = { lon: -114.08833, lat: 51.05067 };
 const AOI = { west: -114.1, south: 51.048, east: -114.062, north: 51.062 };
+const MARKER_SURFACE_OFFSET_M = 2.2;
+const HEIGHT_REF_RELATIVE_TO_3D_TILE = ((
+  HeightReference as unknown as Record<string, HeightReference>
+).RELATIVE_TO_3D_TILE ?? HeightReference.RELATIVE_TO_GROUND) as HeightReference;
 
 type EntityMeta = MapSelection;
 
@@ -86,14 +94,85 @@ function facadeColor(b: Building, selected: boolean): Color {
   if (h > 28) base = Color.fromCssColorString("#e8c9a0");
   else if (h > 16) base = Color.fromCssColorString("#c9b08a");
   else base = Color.fromCssColorString("#9a8b78");
-  return selected ? Color.fromCssColorString("#f59e0b").withAlpha(0.95) : base.withAlpha(0.92);
+  return selected
+    ? Color.fromCssColorString("#f59e0b").withAlpha(0.95)
+    : base.withAlpha(0.92);
 }
 
-function amenityColor(t: string): Color {
-  if (t === "transit") return Color.fromCssColorString("#f472b6");
-  if (t === "park") return Color.fromCssColorString("#4ade80");
-  if (t === "cafe" || t === "restaurant") return Color.fromCssColorString("#fbbf24");
-  return Color.fromCssColorString("#a3a3a3");
+/**
+ * Maps an OSM amenity_type to one of the five schema categories:
+ * Transit · Parks · Healthcare · Emergency Services · Commercial
+ */
+function amenitySchemaCategory(type: string): string {
+  const t = type.toLowerCase();
+  if (
+    [
+      "transit",
+      "subway",
+      "railway",
+      "bus_station",
+      "station",
+      "public_transport",
+    ].includes(t)
+  )
+    return "Transit";
+  if (
+    [
+      "park",
+      "leisure",
+      "garden",
+      "playground",
+      "nature_reserve",
+      "pitch",
+    ].includes(t)
+  )
+    return "Parks";
+  if (
+    [
+      "hospital",
+      "clinic",
+      "pharmacy",
+      "dentist",
+      "doctor",
+      "health_centre",
+      "healthcare",
+    ].includes(t)
+  )
+    return "Healthcare";
+  if (
+    [
+      "fire_station",
+      "police",
+      "ambulance_station",
+      "emergency",
+      "rescue_station",
+    ].includes(t)
+  )
+    return "Emergency Services";
+  if (
+    [
+      "restaurant",
+      "cafe",
+      "bar",
+      "fast_food",
+      "food_court",
+      "biergarten",
+      "pub",
+      "ice_cream",
+    ].includes(t)
+  )
+    return "Commercial";
+  return "Amenity";
+}
+
+function amenityColor(type: string): Color {
+  const cat = amenitySchemaCategory(type);
+  if (cat === "Transit") return Color.fromCssColorString("#f472b6"); // pink
+  if (cat === "Parks") return Color.fromCssColorString("#4ade80"); // green
+  if (cat === "Healthcare") return Color.fromCssColorString("#38bdf8"); // sky-blue
+  if (cat === "Emergency Services") return Color.fromCssColorString("#f97316"); // orange
+  if (cat === "Commercial") return Color.fromCssColorString("#fbbf24"); // amber
+  return Color.fromCssColorString("#a3a3a3"); // grey fallback
 }
 
 function centroid(ring: number[][]): { lon: number; lat: number } {
@@ -106,15 +185,18 @@ function centroid(ring: number[][]): { lon: number; lat: number } {
     sy += c[1];
     n += 1;
   }
-  return n ? { lon: sx / n, lat: sy / n } : { lon: CENTER.lon, lat: CENTER.lat };
+  return n
+    ? { lon: sx / n, lat: sy / n }
+    : { lon: CENTER.lon, lat: CENTER.lat };
 }
 
 function flyHome(viewer: Viewer, duration = 1.4) {
+  // Target: 1024 Memorial Drive NW, Calgary — faces the Bow River / Memorial Drive corridor.
   viewer.camera.flyTo({
-    destination: Cartesian3.fromDegrees(CENTER.lon, CENTER.lat - 0.006, 650),
+    destination: Cartesian3.fromDegrees(HOME.lon, HOME.lat - 0.004, 420),
     orientation: {
-      heading: CesiumMath.toRadians(15),
-      pitch: CesiumMath.toRadians(-42),
+      heading: CesiumMath.toRadians(355), // nearly north → faces the river
+      pitch: CesiumMath.toRadians(-30),
       roll: 0,
     },
     duration,
@@ -140,7 +222,11 @@ function applyCamera(viewer: Viewer, cmd: CameraCommand) {
   }
   if (cmd.type === "oblique") {
     viewer.camera.flyTo({
-      destination: Cartesian3.fromDegrees(CENTER.lon + 0.004, CENTER.lat - 0.01, 480),
+      destination: Cartesian3.fromDegrees(
+        CENTER.lon + 0.004,
+        CENTER.lat - 0.01,
+        480,
+      ),
       orientation: {
         heading: CesiumMath.toRadians(-28),
         pitch: CesiumMath.toRadians(-28),
@@ -180,8 +266,17 @@ function windTip(
   };
 }
 
-/** Flat ground pin — point + thin ring. No cones / pulsing volumes. */
-function groundPinOpts(colorCss: string, ringM = 22) {
+/** Flat ground pin — point + thin ring. No cones / pulsing volumes.
+ *
+ * HeightReference.RELATIVE_TO_GROUND makes Cesium sample the 3D tile / terrain
+ * surface height at the pin location and places the marker above it, preventing
+ * burial inside photorealistic mesh geometry.
+ */
+function groundPinOpts(
+  colorCss: string,
+  heightReference: HeightReference,
+  ringM = 22,
+) {
   const fill = Color.fromCssColorString(colorCss);
   return {
     point: {
@@ -189,6 +284,8 @@ function groundPinOpts(colorCss: string, ringM = 22) {
       color: fill.withAlpha(0.95),
       outlineColor: Color.fromCssColorString("#f5f0e8").withAlpha(0.85),
       outlineWidth: 1.5,
+      // Lift above photorealistic mesh; always-on-top regardless of occluders.
+      heightReference,
       disableDepthTestDistance: Number.POSITIVE_INFINITY,
     },
     ellipse: {
@@ -197,7 +294,9 @@ function groundPinOpts(colorCss: string, ringM = 22) {
       material: fill.withAlpha(0.1),
       outline: true,
       outlineColor: fill.withAlpha(0.55),
-      height: 1.2,
+      // height: 0 = drape on the sampled surface; heightReference handles elevation.
+      height: 0,
+      heightReference,
     },
   };
 }
@@ -272,10 +371,100 @@ export function CesiumMap({
   });
   const forecastEntities = useRef<Entity[]>([]);
   const metaRef = useRef<Map<string, EntityMeta>>(new Map());
+  const surfaceAnchorsRef = useRef<
+    Map<string, { lon: number; lat: number; offsetM: number }>
+  >(new Map());
+  const reclampQueuedRef = useRef(false);
   const highlightRef = useRef<Entity | null>(null);
   const didFly = useRef(false);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const [photoActive, setPhotoActive] = useState(false);
+
+  const markerHeightReference = photoActive
+    ? HEIGHT_REF_RELATIVE_TO_3D_TILE
+    : HeightReference.RELATIVE_TO_GROUND;
+
+  const setSurfaceAnchor = (
+    id: string,
+    lon: number,
+    lat: number,
+    offsetM = MARKER_SURFACE_OFFSET_M,
+  ) => {
+    surfaceAnchorsRef.current.set(id, { lon, lat, offsetM });
+  };
+
+  const clearSurfaceAnchor = (id: string) => {
+    surfaceAnchorsRef.current.delete(id);
+  };
+
+  const queueSurfaceReclamp = () => {
+    const viewer = viewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+    if (reclampQueuedRef.current) return;
+    reclampQueuedRef.current = true;
+
+    requestAnimationFrame(() => {
+      reclampQueuedRef.current = false;
+      const activeViewer = viewerRef.current;
+      if (!activeViewer || activeViewer.isDestroyed()) return;
+
+      const anchors = Array.from(surfaceAnchorsRef.current.entries());
+      if (!anchors.length) return;
+
+      const samples = anchors.map(([, a]) =>
+        Cartesian3.fromDegrees(a.lon, a.lat, 0),
+      );
+      void activeViewer.scene
+        .clampToHeightMostDetailed(samples)
+        .then((clamped) => {
+          const v = viewerRef.current;
+          if (!v || v.isDestroyed()) return;
+
+          for (let i = 0; i < anchors.length; i += 1) {
+            const [id, anchor] = anchors[i];
+            const ent = v.entities.getById(id);
+            if (!ent) continue;
+
+            const sampled = clamped[i];
+            if (defined(sampled)) {
+              const normal = Ellipsoid.WGS84.geodeticSurfaceNormal(
+                sampled,
+                new Cartesian3(),
+              );
+              const lifted = Cartesian3.add(
+                sampled,
+                Cartesian3.multiplyByScalar(
+                  normal,
+                  anchor.offsetM,
+                  new Cartesian3(),
+                ),
+                new Cartesian3(),
+              );
+              ent.position = new ConstantPositionProperty(lifted);
+              continue;
+            }
+
+            ent.position = new ConstantPositionProperty(
+              Cartesian3.fromDegrees(anchor.lon, anchor.lat, anchor.offsetM),
+            );
+          }
+          v.scene.requestRender();
+        })
+        .catch(() => {
+          const v = viewerRef.current;
+          if (!v || v.isDestroyed()) return;
+          for (const [id, anchor] of anchors) {
+            const ent = v.entities.getById(id);
+            if (!ent) continue;
+            ent.position = new ConstantPositionProperty(
+              Cartesian3.fromDegrees(anchor.lon, anchor.lat, anchor.offsetM),
+            );
+          }
+          v.scene.requestRender();
+        });
+    });
+  };
 
   useEffect(() => {
     if (!containerRef.current || viewerRef.current) return;
@@ -312,11 +501,17 @@ export function CesiumMap({
     viewer.entities.add({
       id: "aoi-bounds",
       rectangle: {
-        coordinates: Rectangle.fromDegrees(AOI.west, AOI.south, AOI.east, AOI.north),
+        coordinates: Rectangle.fromDegrees(
+          AOI.west,
+          AOI.south,
+          AOI.east,
+          AOI.north,
+        ),
         material: Color.fromCssColorString("#d4a373").withAlpha(0.04),
         outline: true,
         outlineColor: Color.fromCssColorString("#d4a373").withAlpha(0.45),
-        height: 0.5,
+        height: 0,
+        heightReference: HeightReference.RELATIVE_TO_GROUND,
       },
     });
 
@@ -326,7 +521,9 @@ export function CesiumMap({
       const canvas = viewer.scene.canvas;
       if (defined(picked) && picked.id && typeof picked.id !== "string") {
         const ent = picked.id as Entity;
-        canvas.style.cursor = metaRef.current.has(String(ent.id)) ? "pointer" : "grab";
+        canvas.style.cursor = metaRef.current.has(String(ent.id))
+          ? "pointer"
+          : "grab";
       } else {
         canvas.style.cursor = "grab";
       }
@@ -349,7 +546,8 @@ export function CesiumMap({
 
     handler.setInputAction((click: { position: Cartesian2 }) => {
       const picked = viewer.scene.pick(click.position);
-      if (!defined(picked) || !picked.id || typeof picked.id === "string") return;
+      if (!defined(picked) || !picked.id || typeof picked.id === "string")
+        return;
       const ent = picked.id as Entity;
       const meta = metaRef.current.get(String(ent.id));
       if (!meta) return;
@@ -393,18 +591,19 @@ export function CesiumMap({
       photorealisticLoadingRef.current = false;
       didFly.current = false;
       metaRef.current.clear();
+      surfaceAnchorsRef.current.clear();
     };
   }, []);
 
   // Google tiles ship baked real-world lighting and their own terrain, so the
   // globe/basemap is hidden and Cesium lighting/shadows/post-FX stay OFF —
   // stacking them on the tiles causes striping and a washed-out picture.
-  const [photoActive, setPhotoActive] = useState(false);
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
     viewer.scene.globe.show = !photoActive;
-    if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = photoActive;
+    if (viewer.scene.skyAtmosphere)
+      viewer.scene.skyAtmosphere.show = photoActive;
     viewer.shadows = false;
     viewer.scene.postProcessStages.ambientOcclusion.enabled = false;
     viewer.scene.postProcessStages.bloom.enabled = false;
@@ -428,7 +627,9 @@ export function CesiumMap({
     }
     // Let the camera get close to street level on textured tiles, but not
     // zoom out far enough to stream the whole city.
-    viewer.scene.screenSpaceCameraController.minimumZoomDistance = photoActive ? 15 : 80;
+    viewer.scene.screenSpaceCameraController.minimumZoomDistance = photoActive
+      ? 15
+      : 80;
     viewer.scene.screenSpaceCameraController.maximumZoomDistance = photoActive
       ? 4000
       : 12000;
@@ -446,14 +647,28 @@ export function CesiumMap({
       const carto = viewer.camera.positionCartographic;
       const lon = CesiumMath.toDegrees(carto.longitude);
       const lat = CesiumMath.toDegrees(carto.latitude);
-      const clampedLon = Math.min(Math.max(lon, AOI.west - MARGIN), AOI.east + MARGIN);
-      const clampedLat = Math.min(Math.max(lat, AOI.south - MARGIN), AOI.north + MARGIN);
+      const clampedLon = Math.min(
+        Math.max(lon, AOI.west - MARGIN),
+        AOI.east + MARGIN,
+      );
+      const clampedLat = Math.min(
+        Math.max(lat, AOI.south - MARGIN),
+        AOI.north + MARGIN,
+      );
       const clampedHeight = Math.min(carto.height, MAX_CAMERA_HEIGHT);
-      if (clampedLon === lon && clampedLat === lat && clampedHeight === carto.height) {
+      if (
+        clampedLon === lon &&
+        clampedLat === lat &&
+        clampedHeight === carto.height
+      ) {
         return;
       }
       viewer.camera.setView({
-        destination: Cartesian3.fromDegrees(clampedLon, clampedLat, clampedHeight),
+        destination: Cartesian3.fromDegrees(
+          clampedLon,
+          clampedLat,
+          clampedHeight,
+        ),
         orientation: {
           heading: viewer.camera.heading,
           pitch: viewer.camera.pitch,
@@ -488,6 +703,7 @@ export function CesiumMap({
       photorealisticRef.current.show = true;
       onPhotorealisticStatusRef.current("ready");
       setPhotoActive(true);
+      queueSurfaceReclamp();
       return;
     }
     if (photorealisticLoadingRef.current) return;
@@ -503,8 +719,11 @@ export function CesiumMap({
         viewer.scene.primitives.add(tileset);
         photorealisticRef.current = tileset;
         photorealisticLoadingRef.current = false;
+        tileset.tileLoad.addEventListener(queueSurfaceReclamp);
+        tileset.allTilesLoaded.addEventListener(queueSurfaceReclamp);
         onPhotorealisticStatusRef.current("ready");
         setPhotoActive(true);
+        queueSurfaceReclamp();
         viewer.scene.requestRender();
       })
       .catch((error: unknown) => {
@@ -537,7 +756,10 @@ export function CesiumMap({
       CesiumMath.toRadians(droneTelemetry.pitch_deg),
       CesiumMath.toRadians(droneTelemetry.roll_deg),
     );
-    const orientation = Transforms.headingPitchRollQuaternion(position, attitude);
+    const orientation = Transforms.headingPitchRollQuaternion(
+      position,
+      attitude,
+    );
 
     if (!droneEntityRef.current) {
       droneEntityRef.current = viewer.entities.add({
@@ -634,22 +856,34 @@ export function CesiumMap({
     if (!meta) return;
     highlightRef.current = viewer.entities.add({
       id: "selection-ring",
-      position: Cartesian3.fromDegrees(meta.lon, meta.lat, 1),
+      position: Cartesian3.fromDegrees(meta.lon, meta.lat, 0),
       ellipse: {
         semiMajorAxis: meta.kind === "building" ? 28 : 32,
         semiMinorAxis: meta.kind === "building" ? 28 : 32,
         material: Color.fromCssColorString("#d4a373").withAlpha(0.08),
         outline: true,
         outlineColor: Color.fromCssColorString("#d4a373").withAlpha(0.75),
-        height: 1.5,
+        height: 0,
+        heightReference: HeightReference.RELATIVE_TO_GROUND,
       },
     });
-  }, [selectionId, buildings, amenities, incidents, pathways, liveTemp, river, air, forecasts]);
+  }, [
+    selectionId,
+    buildings,
+    amenities,
+    incidents,
+    pathways,
+    liveTemp,
+    river,
+    air,
+    forecasts,
+  ]);
 
   const clearGroup = (viewer: Viewer, key: string) => {
     for (const id of ids.current[key] || []) {
       viewer.entities.removeById(id);
       metaRef.current.delete(id);
+      clearSurfaceAnchor(id);
     }
     ids.current[key] = [];
   };
@@ -694,7 +928,10 @@ export function CesiumMap({
           details: [
             { label: "Height", value: `${h.toFixed(0)} m (est.)` },
             { label: "Source", value: b.source || "osm" },
-            { label: "Lon / Lat", value: `${c.lon.toFixed(5)}, ${c.lat.toFixed(5)}` },
+            {
+              label: "Lon / Lat",
+              value: `${c.lon.toFixed(5)}, ${c.lat.toFixed(5)}`,
+            },
           ],
           lon: c.lon,
           lat: c.lat,
@@ -760,16 +997,15 @@ export function CesiumMap({
       const selected = selectionId === id;
       viewer.entities.add({
         id,
-        position: Cartesian3.fromDegrees(a.lon, a.lat, 8),
+        position: Cartesian3.fromDegrees(a.lon, a.lat, MARKER_SURFACE_OFFSET_M),
         point: {
-          pixelSize: selected
-            ? 16
-            : a.amenity_type === "transit"
-              ? 12
-              : 8,
+          pixelSize: selected ? 16 : a.amenity_type === "transit" ? 12 : 8,
           color: amenityColor(a.amenity_type),
-          outlineColor: selected ? Color.fromCssColorString("#fde68a") : Color.WHITE,
+          outlineColor: selected
+            ? Color.fromCssColorString("#fde68a")
+            : Color.WHITE,
           outlineWidth: selected ? 3 : 1,
+          heightReference: markerHeightReference,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
         label: selected
@@ -779,27 +1015,41 @@ export function CesiumMap({
               fillColor: Color.WHITE,
               pixelOffset: new Cartesian2(0, -14),
               showBackground: true,
-              backgroundColor: Color.fromCssColorString("#831843").withAlpha(0.85),
+              backgroundColor:
+                Color.fromCssColorString("#831843").withAlpha(0.85),
+              heightReference: markerHeightReference,
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
             }
           : undefined,
       });
+      setSurfaceAnchor(id, a.lon, a.lat);
       metaRef.current.set(id, {
         kind: "amenity",
         id,
         title: a.name || a.amenity_type,
-        subtitle: a.amenity_type,
+        subtitle: amenitySchemaCategory(a.amenity_type),
         details: [
+          { label: "Category", value: amenitySchemaCategory(a.amenity_type) },
           { label: "Type", value: a.amenity_type },
           { label: "Source", value: a.source },
-          { label: "Lon / Lat", value: `${a.lon.toFixed(5)}, ${a.lat.toFixed(5)}` },
+          {
+            label: "Lon / Lat",
+            value: `${a.lon.toFixed(5)}, ${a.lat.toFixed(5)}`,
+          },
         ],
         lon: a.lon,
         lat: a.lat,
       });
       ids.current.amenities.push(id);
     }
-  }, [amenities, layers.amenities, selectionId]);
+    if (photoActive) queueSurfaceReclamp();
+  }, [
+    amenities,
+    layers.amenities,
+    selectionId,
+    markerHeightReference,
+    photoActive,
+  ]);
 
   // Incidents
   useEffect(() => {
@@ -812,15 +1062,23 @@ export function CesiumMap({
       const selected = selectionId === id;
       viewer.entities.add({
         id,
-        position: Cartesian3.fromDegrees(inc.lon, inc.lat, 12),
+        position: Cartesian3.fromDegrees(
+          inc.lon,
+          inc.lat,
+          MARKER_SURFACE_OFFSET_M,
+        ),
         point: {
           pixelSize: selected ? 18 : 14,
           color: Color.fromCssColorString("#f87171"),
-          outlineColor: selected ? Color.fromCssColorString("#fde68a") : Color.WHITE,
+          outlineColor: selected
+            ? Color.fromCssColorString("#fde68a")
+            : Color.WHITE,
           outlineWidth: selected ? 3 : 2,
+          heightReference: markerHeightReference,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         },
       });
+      setSurfaceAnchor(id, inc.lon, inc.lat);
       metaRef.current.set(id, {
         kind: "incident",
         id,
@@ -841,7 +1099,14 @@ export function CesiumMap({
       });
       ids.current.incidents.push(id);
     }
-  }, [incidents, layers.incidents, selectionId]);
+    if (photoActive) queueSurfaceReclamp();
+  }, [
+    incidents,
+    layers.incidents,
+    selectionId,
+    markerHeightReference,
+    photoActive,
+  ]);
 
   // Live weather — ground pin
   useEffect(() => {
@@ -849,24 +1114,34 @@ export function CesiumMap({
     if (!viewer) return;
     if (beacons.current.live) {
       metaRef.current.delete("live-sensor");
+      clearSurfaceAnchor("live-sensor");
       viewer.entities.remove(beacons.current.live);
       beacons.current.live = null;
     }
     if (!layers.live || !liveTemp) return;
     const id = "live-sensor";
-    const pin = groundPinOpts("#d4a373", 26);
+    const pin = groundPinOpts("#d4a373", markerHeightReference, 26);
     beacons.current.live = viewer.entities.add({
       id,
-      position: Cartesian3.fromDegrees(liveTemp.lon, liveTemp.lat, 2),
+      position: Cartesian3.fromDegrees(
+        liveTemp.lon,
+        liveTemp.lat,
+        MARKER_SURFACE_OFFSET_M,
+      ),
       ...pin,
     });
+    setSurfaceAnchor(id, liveTemp.lon, liveTemp.lat);
+    if (photoActive) queueSurfaceReclamp();
     metaRef.current.set(id, {
       kind: "sensor",
       id,
       title: "Live weather",
       subtitle: `${liveTemp.value.toFixed(1)} ${liveTemp.unit}`,
       details: [
-        { label: "Temp", value: `${liveTemp.value.toFixed(1)} ${liveTemp.unit}` },
+        {
+          label: "Temp",
+          value: `${liveTemp.value.toFixed(1)} ${liveTemp.unit}`,
+        },
         { label: "Source", value: liveTemp.source || "openweather" },
         {
           label: "Recorded",
@@ -876,7 +1151,7 @@ export function CesiumMap({
       lon: liveTemp.lon,
       lat: liveTemp.lat,
     });
-  }, [liveTemp, layers.live]);
+  }, [liveTemp, layers.live, markerHeightReference, photoActive]);
 
   // River — ground pin
   useEffect(() => {
@@ -884,17 +1159,24 @@ export function CesiumMap({
     if (!viewer) return;
     if (beacons.current.river) {
       metaRef.current.delete("river-sensor");
+      clearSurfaceAnchor("river-sensor");
       viewer.entities.remove(beacons.current.river);
       beacons.current.river = null;
     }
     if (!layers.river || !river) return;
     const id = "river-sensor";
-    const pin = groundPinOpts("#5b9bb8", 26);
+    const pin = groundPinOpts("#5b9bb8", markerHeightReference, 26);
     beacons.current.river = viewer.entities.add({
       id,
-      position: Cartesian3.fromDegrees(river.lon, river.lat, 2),
+      position: Cartesian3.fromDegrees(
+        river.lon,
+        river.lat,
+        MARKER_SURFACE_OFFSET_M,
+      ),
       ...pin,
     });
+    setSurfaceAnchor(id, river.lon, river.lat);
+    if (photoActive) queueSurfaceReclamp();
     metaRef.current.set(id, {
       kind: "sensor",
       id,
@@ -911,7 +1193,7 @@ export function CesiumMap({
       lon: river.lon,
       lat: river.lat,
     });
-  }, [river, layers.river]);
+  }, [river, layers.river, markerHeightReference, photoActive]);
 
   // Air quality — compact ring (no giant halo)
   useEffect(() => {
@@ -919,6 +1201,7 @@ export function CesiumMap({
     if (!viewer) return;
     if (beacons.current.air) {
       metaRef.current.delete("air-sensor");
+      clearSurfaceAnchor("air-sensor");
       viewer.entities.remove(beacons.current.air);
       beacons.current.air = null;
     }
@@ -926,12 +1209,18 @@ export function CesiumMap({
     const id = "air-sensor";
     const tone =
       air.value <= 12 ? "#6b9b7a" : air.value <= 35 ? "#c4a574" : "#b86a5a";
-    const pin = groundPinOpts(tone, 30);
+    const pin = groundPinOpts(tone, markerHeightReference, 30);
     beacons.current.air = viewer.entities.add({
       id,
-      position: Cartesian3.fromDegrees(air.lon, air.lat, 2),
+      position: Cartesian3.fromDegrees(
+        air.lon,
+        air.lat,
+        MARKER_SURFACE_OFFSET_M,
+      ),
       ...pin,
     });
+    setSurfaceAnchor(id, air.lon, air.lat);
+    if (photoActive) queueSurfaceReclamp();
     metaRef.current.set(id, {
       kind: "sensor",
       id,
@@ -948,7 +1237,7 @@ export function CesiumMap({
       lon: air.lon,
       lat: air.lat,
     });
-  }, [air, layers.air]);
+  }, [air, layers.air, markerHeightReference, photoActive]);
 
   // Forecasts — small offset pins (values live in the side panel)
   useEffect(() => {
@@ -956,6 +1245,7 @@ export function CesiumMap({
     if (!viewer) return;
     for (const e of forecastEntities.current) {
       metaRef.current.delete(String(e.id));
+      clearSurfaceAnchor(String(e.id));
       viewer.entities.remove(e);
     }
     forecastEntities.current = [];
@@ -991,12 +1281,13 @@ export function CesiumMap({
         : isAir
           ? `${fc.predicted_value.toFixed(1)} µg/m³`
           : `${fc.predicted_value.toFixed(1)} °C`;
-      const pin = groundPinOpts(color, 18);
+      const pin = groundPinOpts(color, markerHeightReference, 18);
       const entity = viewer.entities.add({
         id,
-        position: Cartesian3.fromDegrees(lon, lat, 2),
+        position: Cartesian3.fromDegrees(lon, lat, MARKER_SURFACE_OFFSET_M),
         ...pin,
       });
+      setSurfaceAnchor(id, lon, lat);
       metaRef.current.set(id, {
         kind: "forecast",
         id,
@@ -1020,7 +1311,14 @@ export function CesiumMap({
       });
       forecastEntities.current.push(entity);
     }
-  }, [forecasts, layers.forecast, forecastHorizon]);
+    if (photoActive) queueSurfaceReclamp();
+  }, [
+    forecasts,
+    layers.forecast,
+    forecastHorizon,
+    markerHeightReference,
+    photoActive,
+  ]);
 
   // Wind field — short muted ticks (pathway-adjacent language)
   useEffect(() => {
@@ -1030,7 +1328,12 @@ export function CesiumMap({
     if (!layers.wind || !windGrid.length) return;
     const stroke = Color.fromCssColorString("#8a9aa3").withAlpha(0.75);
     windGrid.forEach((cell, i) => {
-      const tip = windTip(cell.lon, cell.lat, cell.direction_deg, cell.speed_ms);
+      const tip = windTip(
+        cell.lon,
+        cell.lat,
+        cell.direction_deg,
+        cell.speed_ms,
+      );
       const id = `wind-${i}`;
       const speed = cell.speed_ms;
       viewer.entities.add({
@@ -1082,6 +1385,7 @@ export function CesiumMap({
     if (!viewer) return;
     if (beacons.current.windStation) {
       metaRef.current.delete("wind-station");
+      clearSurfaceAnchor("wind-station");
       viewer.entities.remove(beacons.current.windStation);
       beacons.current.windStation = null;
     }
@@ -1089,12 +1393,18 @@ export function CesiumMap({
     // Prefer grid ticks; only show station pin when no grid cells
     if (windGrid.length) return;
     const id = "wind-station";
-    const pin = groundPinOpts("#8a9aa3", 20);
+    const pin = groundPinOpts("#8a9aa3", markerHeightReference, 20);
     beacons.current.windStation = viewer.entities.add({
       id,
-      position: Cartesian3.fromDegrees(wind.lon, wind.lat, 2),
+      position: Cartesian3.fromDegrees(
+        wind.lon,
+        wind.lat,
+        MARKER_SURFACE_OFFSET_M,
+      ),
       ...pin,
     });
+    setSurfaceAnchor(id, wind.lon, wind.lat);
+    if (photoActive) queueSurfaceReclamp();
     metaRef.current.set(id, {
       kind: "sensor",
       id,
@@ -1111,7 +1421,14 @@ export function CesiumMap({
       lon: wind.lon,
       lat: wind.lat,
     });
-  }, [wind, windDir, layers.wind, windGrid.length]);
+  }, [
+    wind,
+    windDir,
+    layers.wind,
+    windGrid.length,
+    markerHeightReference,
+    photoActive,
+  ]);
 
   // Humidity — pin only
   useEffect(() => {
@@ -1119,21 +1436,25 @@ export function CesiumMap({
     if (!viewer) return;
     if (beacons.current.humidity) {
       metaRef.current.delete("humidity-sensor");
+      clearSurfaceAnchor("humidity-sensor");
       viewer.entities.remove(beacons.current.humidity);
       beacons.current.humidity = null;
     }
     if (!layers.humidity || !humidity) return;
     const id = "humidity-sensor";
-    const pin = groundPinOpts("#7a8f9c", 18);
+    const pin = groundPinOpts("#7a8f9c", markerHeightReference, 18);
     beacons.current.humidity = viewer.entities.add({
       id,
+      // Anchored to exact sensor WGS84 coordinates — no relative offsets.
       position: Cartesian3.fromDegrees(
-        humidity.lon + 0.0006,
-        humidity.lat + 0.0004,
-        2,
+        humidity.lon,
+        humidity.lat,
+        MARKER_SURFACE_OFFSET_M,
       ),
       ...pin,
     });
+    setSurfaceAnchor(id, humidity.lon, humidity.lat);
+    if (photoActive) queueSurfaceReclamp();
     metaRef.current.set(id, {
       kind: "sensor",
       id,
@@ -1146,7 +1467,7 @@ export function CesiumMap({
       lon: humidity.lon,
       lat: humidity.lat,
     });
-  }, [humidity, layers.humidity]);
+  }, [humidity, layers.humidity, markerHeightReference, photoActive]);
 
   // Precip — pin only
   useEffect(() => {
@@ -1154,22 +1475,30 @@ export function CesiumMap({
     if (!viewer) return;
     if (beacons.current.precip) {
       metaRef.current.delete("precip-sensor");
+      clearSurfaceAnchor("precip-sensor");
       viewer.entities.remove(beacons.current.precip);
       beacons.current.precip = null;
     }
     if (!layers.precip || !precip) return;
     const id = "precip-sensor";
     const wet = precip.value > 0.05;
-    const pin = groundPinOpts(wet ? "#6a8aaa" : "#6b7280", 18);
+    const pin = groundPinOpts(
+      wet ? "#6a8aaa" : "#6b7280",
+      markerHeightReference,
+      18,
+    );
     beacons.current.precip = viewer.entities.add({
       id,
+      // Anchored to exact sensor WGS84 coordinates — no relative offsets.
       position: Cartesian3.fromDegrees(
-        precip.lon - 0.0006,
-        precip.lat + 0.0005,
-        2,
+        precip.lon,
+        precip.lat,
+        MARKER_SURFACE_OFFSET_M,
       ),
       ...pin,
     });
+    setSurfaceAnchor(id, precip.lon, precip.lat);
+    if (photoActive) queueSurfaceReclamp();
     metaRef.current.set(id, {
       kind: "sensor",
       id,
@@ -1182,7 +1511,7 @@ export function CesiumMap({
       lon: precip.lon,
       lat: precip.lat,
     });
-  }, [precip, layers.precip]);
+  }, [precip, layers.precip, markerHeightReference, photoActive]);
 
   return <div className="cesium-host" ref={containerRef} />;
 }

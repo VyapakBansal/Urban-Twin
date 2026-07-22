@@ -12,7 +12,9 @@
     "validate": "bash -c '.venv/Scripts/python.exe -m urban_twin.forecast.main --validate \"$@\"' --",
     "ingest": "bash -c '.venv/Scripts/python.exe -m urban_twin.ingestion.main --once \"$@\"' --",
     "forecast": "bash -c '.venv/Scripts/python.exe -m urban_twin.forecast.main --once \"$@\"' --",
-    "drone": "bash -c '.venv/Scripts/python.exe -m urban_twin.drone.main \"$@\"' --",
+    "drone": "bash scripts/drone.sh",
+    "drone:bridge": "bash scripts/drone.sh --skip-sim",
+    "drone:sim": "bash scripts/drone.sh --sim-only",
     "frontend": "npm --prefix frontend run dev"
   }
 }

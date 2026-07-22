@@ -21,6 +21,30 @@ done
 
 echo "==> Urban Twin down"
 
+stop_px4_sim() {
+  if ! command -v wsl >/dev/null 2>&1; then
+    return 0
+  fi
+  local wsl_root
+  if command -v wslpath >/dev/null 2>&1; then
+    wsl_root="$(wslpath -a "$ROOT")"
+  elif [[ "$ROOT" =~ ^/[a-zA-Z]/ ]]; then
+    local drive="${ROOT:1:1}"
+    local rest="${ROOT:2}"
+    wsl_root="/mnt/$(echo "$drive" | tr '[:upper:]' '[:lower:]')$rest"
+  else
+    wsl_root="$(wsl wslpath -a "$ROOT" 2>/dev/null || true)"
+  fi
+  if [[ -n "${wsl_root:-}" ]]; then
+    echo "  · stopping PX4 SITL (WSL2)"
+    wsl bash -lc "cd '$wsl_root' && bash scripts/px4-sitl.sh --stop" 2>/dev/null || true
+  fi
+}
+
+if [[ -f "$PID_DIR/px4-sitl.pid" ]] || command -v wsl >/dev/null 2>&1; then
+  stop_px4_sim
+fi
+
 if [[ -d "$PID_DIR" ]]; then
   for pidfile in "$PID_DIR"/*.pid; do
     [[ -f "$pidfile" ]] || continue
