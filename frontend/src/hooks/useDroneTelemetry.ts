@@ -74,12 +74,15 @@ export function useDroneTelemetry(enabled: boolean) {
             setTelemetry(value);
             return;
           }
-          if (
-            value &&
-            typeof value === "object" &&
-            (value as Record<string, unknown>).event_type === "drone.control.error"
-          ) {
-            setControlError("The flight bridge rejected the command.");
+          if (value && typeof value === "object") {
+            const frame = value as Record<string, unknown>;
+            if (frame.event_type === "drone.control.ack") {
+              setControlError(null);
+              return;
+            }
+            if (frame.event_type === "drone.control.error") {
+              setControlError("Invalid control command (check browser console).");
+            }
           }
         } catch {
           // Ignore malformed/non-drone frames without destabilizing the map.

@@ -4,6 +4,8 @@
 
 set -euo pipefail
 
+export MSYS_NO_PATHCONV=1
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PID_DIR="$ROOT/.run/pids"
 STOP_DOCKER=0
@@ -26,18 +28,25 @@ stop_px4_sim() {
     return 0
   fi
   local wsl_root
-  if command -v wslpath >/dev/null 2>&1; then
-    wsl_root="$(wslpath -a "$ROOT")"
-  elif [[ "$ROOT" =~ ^/[a-zA-Z]/ ]]; then
-    local drive="${ROOT:1:1}"
-    local rest="${ROOT:2}"
+  local root="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+  local p="${root//\\//}"
+  if [[ "$p" =~ ^/[a-zA-Z]/ ]]; then
+    local drive="${p:1:1}"
+    local rest="${p:2}"
     wsl_root="/mnt/$(echo "$drive" | tr '[:upper:]' '[:lower:]')$rest"
+  elif [[ "$p" =~ ^[A-Za-z]: ]]; then
+    wsl_root="/mnt/$(echo "${p:0:1}" | tr '[:upper:]' '[:lower:]')${p:2}"
+  elif command -v wslpath >/dev/null 2>&1; then
+    wsl_root="$(wslpath -a "$root")"
   else
-    wsl_root="$(wsl wslpath -a "$ROOT" 2>/dev/null || true)"
+    wsl_root="$(wsl wslpath -a "$root" 2>/dev/null || true)"
   fi
   if [[ -n "${wsl_root:-}" ]]; then
     echo "  · stopping PX4 SITL (WSL2)"
-    wsl bash -lc "cd '$wsl_root' && bash scripts/px4-sitl.sh --stop" 2>/dev/null || true
+    MSYS_NO_PATHCONV=1 wsl bash -lc "cd '$wsl_root' && bash scripts/px4-sitl.sh --stop" 2>/dev/null || true
+  fi
+  if command -v taskkill >/dev/null 2>&1; then
+    taskkill //F //IM mavsdk_server.exe >/dev/null 2>&1 || true
   fi
 }
 

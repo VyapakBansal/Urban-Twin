@@ -119,6 +119,8 @@ class DroneBridge:
                 logger.info("PX4 connected")
                 break
 
+        await self._configure_sitl()
+
         self.producer = AIOKafkaProducer(
             bootstrap_servers=self.config.kafka_bootstrap_servers,
             value_serializer=_serialize,
@@ -152,6 +154,21 @@ class DroneBridge:
             await self.control_consumer.stop()
             await self.producer.stop()
             logger.info("drone bridge stopped")
+
+    async def _configure_sitl(self) -> None:
+        """Relax headless SITL arming checks (no QGC on UDP 14550)."""
+        sitl_params: tuple[tuple[str, int], ...] = (
+            ("CBRK_SUPPLY_CHK", 894281),  # skip power-rail check in sim
+            ("NAV_DLL_ACT", 0),  # no GCS/data-link arming block
+            ("NAV_RCL_ACT", 0),  # no RC-link arming block
+            ("COM_RCL_EXCEPT", 4),  # allow offboard without physical RC
+        )
+        for name, value in sitl_params:
+            try:
+                await self.drone.param.set_param_int(name, value)
+                logger.info("PX4 param %s=%s", name, value)
+            except Exception:
+                logger.warning("failed to set PX4 param %s", name, exc_info=True)
 
     async def _collect_position(self) -> None:
         async for value in self.drone.telemetry.position_velocity_ned():
@@ -212,10 +229,16 @@ class DroneBridge:
 
     async def _apply_control(self, event: DroneControlEvent) -> None:
         if event.command == "arm":
-            await self.drone.action.arm()
+            try:
+                await self.drone.action.arm()
+            except Exception as exc:
+                logger.warning("PX4 arm failed: %s", exc)
             return
         if event.command == "takeoff":
-            await self.drone.action.takeoff()
+            try:
+                await self.drone.action.takeoff()
+            except Exception as exc:
+                logger.warning("PX4 takeoff failed: %s", exc)
             return
         if event.command == "land":
             await self._stop_offboard()

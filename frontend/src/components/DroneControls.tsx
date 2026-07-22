@@ -29,6 +29,17 @@ type Props = {
 const MOVE_SPEED = 2.0;
 const CLIMB_SPEED = 0.5;
 
+function droneStatusLabel(status: string, telemetry: DroneTelemetryEvent | null, stale: boolean): string {
+  if (status === "open" && (!telemetry || stale)) {
+    return "waiting for PX4";
+  }
+  if (status === "connecting") return "connecting…";
+  if (status === "closed") return "reconnecting…";
+  if (status === "error") return "bridge error";
+  if (status === "disabled") return "off";
+  return status;
+}
+
 export function DroneControls({
   visible,
   phone,
@@ -46,7 +57,8 @@ export function DroneControls({
   const stale = telemetry
     ? Date.now() - new Date(telemetry.recorded_at).getTime() > 1500
     : true;
-  const controllable = connected && Boolean(telemetry) && !stale && !phone;
+  const px4Live = connected && Boolean(telemetry) && !stale;
+  const controllable = px4Live && !phone;
   // WASDQE is live as soon as the vehicle is armed; Arm/Take off still come first.
   const wasdqeEnabled = controllable && Boolean(telemetry?.armed);
 
@@ -120,8 +132,8 @@ export function DroneControls({
       <div className="drone-controls-head">
         <div>
           <p className="panel-title">Drone</p>
-          <strong className={connected && !stale ? "ok" : "bad"}>
-            {connected && telemetry && !stale ? telemetry.flight_mode : status}
+          <strong className={px4Live ? "ok" : "bad"}>
+            {px4Live ? telemetry!.flight_mode : droneStatusLabel(status, telemetry, stale)}
           </strong>
         </div>
         {telemetry && (
@@ -160,7 +172,11 @@ export function DroneControls({
           <p className="drone-key-hint">
             {wasdqeEnabled
               ? "WASD move · Q up · E down"
-              : "Arm + Take off, then WASD / QE"}
+              : !connected
+                ? "Drone link reconnecting…"
+                : stale
+                  ? "Telemetry paused — check npm run drone"
+                  : "Arm + Take off, then WASD / QE"}
           </p>
         </>
       ) : (

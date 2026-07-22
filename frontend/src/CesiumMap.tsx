@@ -3,6 +3,7 @@ import {
   Cartesian2,
   Cartesian3,
   Cesium3DTileset,
+  Cartographic,
   Color,
   ConstantPositionProperty,
   ConstantProperty,
@@ -52,6 +53,59 @@ const MARKER_SURFACE_OFFSET_M = 2.2;
 const HEIGHT_REF_RELATIVE_TO_3D_TILE = ((
   HeightReference as unknown as Record<string, HeightReference>
 ).RELATIVE_TO_3D_TILE ?? HeightReference.RELATIVE_TO_GROUND) as HeightReference;
+
+type DroneSmoothState = {
+  lon: number;
+  lat: number;
+  agl: number;
+  yaw: number;
+  pitch: number;
+  roll: number;
+};
+
+function lerpAngleDeg(from: number, to: number, t: number): number {
+  const delta = ((((to - from) % 360) + 540) % 360) - 180;
+  return from + delta * t;
+}
+
+function smoothDroneState(
+  current: DroneSmoothState,
+  target: DroneTelemetryEvent,
+  t: number,
+): DroneSmoothState {
+  return {
+    lon: current.lon + (target.lon - current.lon) * t,
+    lat: current.lat + (target.lat - current.lat) * t,
+    agl: current.agl + (target.relative_altitude_m - current.agl) * t,
+    yaw: lerpAngleDeg(current.yaw, target.yaw_deg, t),
+    pitch: current.pitch + (target.pitch_deg - current.pitch) * t,
+    roll: current.roll + (target.roll_deg - current.roll) * t,
+  };
+}
+
+function droneSmoothFromTelemetry(
+  telemetry: DroneTelemetryEvent,
+): DroneSmoothState {
+  return {
+    lon: telemetry.lon,
+    lat: telemetry.lat,
+    agl: telemetry.relative_altitude_m,
+    yaw: telemetry.yaw_deg,
+    pitch: telemetry.pitch_deg,
+    roll: telemetry.roll_deg,
+  };
+}
+
+function dronePositionFromSurface(
+  smooth: DroneSmoothState,
+  surfaceEllipsoidM: number,
+): Cartesian3 {
+  return Cartesian3.fromDegrees(
+    smooth.lon,
+    smooth.lat,
+    surfaceEllipsoidM + smooth.agl,
+  );
+}
 
 type EntityMeta = MapSelection;
 
@@ -350,6 +404,12 @@ export function CesiumMap({
   const photorealisticRef = useRef<Cesium3DTileset | null>(null);
   const photorealisticLoadingRef = useRef(false);
   const droneEntityRef = useRef<Entity | null>(null);
+  const dronePositionRef = useRef<ConstantPositionProperty | null>(null);
+  const droneOrientationRef = useRef<ConstantProperty | null>(null);
+  const droneTargetRef = useRef<DroneTelemetryEvent | null>(null);
+  const droneSmoothRef = useRef<DroneSmoothState | null>(null);
+  const droneSurfaceEllipsoidRef = useRef<number | null>(null);
+  const droneRafRef = useRef<number | null>(null);
   const themeRef = useRef(theme);
   themeRef.current = theme;
   const onPhotorealisticStatusRef = useRef(onPhotorealisticStatus);
@@ -384,6 +444,8 @@ export function CesiumMap({
   const markerHeightReference = photoActive
     ? HEIGHT_REF_RELATIVE_TO_3D_TILE
     : HeightReference.RELATIVE_TO_GROUND;
+
+  droneTargetRef.current = droneTelemetry;
 
   const setSurfaceAnchor = (
     id: string,
@@ -737,92 +799,184 @@ export function CesiumMap({
       });
   }, [layers.photorealistic]);
 
-  // One persistent drone entity: update properties in place at telemetry rate.
+  // Sample visible terrain/tiles at the AOI so PX4 AGL matches Cesium's surface.
   useEffect(() => {
+    if (!layers.drone) {
+      droneSurfaceEllipsoidRef.current = null;
+      return;
+    }
     const viewer = viewerRef.current;
-    if (!viewer) return;
-    if (!droneTelemetry || !layers.drone) {
+    if (!viewer || viewer.isDestroyed()) return;
+
+    const anchor = Cartesian3.fromDegrees(CENTER.lon, CENTER.lat, 0);
+    const quickCarto = Cartographic.fromDegrees(CENTER.lon, CENTER.lat);
+    const quickHeight = viewer.scene.sampleHeight(quickCarto);
+    if (quickHeight != null) {
+      droneSurfaceEllipsoidRef.current = quickHeight;
+    }
+    void viewer.scene
+      .clampToHeightMostDetailed([anchor])
+      .then((clamped) => {
+        const active = viewerRef.current;
+        if (!active || active.isDestroyed() || !defined(clamped[0])) return;
+        const carto = Cartographic.fromCartesian(clamped[0]);
+        if (carto) {
+          droneSurfaceEllipsoidRef.current = carto.height;
+          active.scene.requestRender();
+        }
+      })
+      .catch(() => {
+        /* keep last surface estimate */
+      });
+  }, [layers.drone, photoActive]);
+
+  useEffect(() => {
+    if (!layers.drone) {
       if (droneEntityRef.current) droneEntityRef.current.show = false;
+      droneSmoothRef.current = null;
+      if (droneRafRef.current != null) {
+        cancelAnimationFrame(droneRafRef.current);
+        droneRafRef.current = null;
+      }
       return;
     }
 
-    const position = Cartesian3.fromDegrees(
-      droneTelemetry.lon,
-      droneTelemetry.lat,
-      droneTelemetry.altitude_m,
-    );
-    const attitude = new HeadingPitchRoll(
-      CesiumMath.toRadians(droneTelemetry.yaw_deg),
-      CesiumMath.toRadians(droneTelemetry.pitch_deg),
-      CesiumMath.toRadians(droneTelemetry.roll_deg),
-    );
-    const orientation = Transforms.headingPitchRollQuaternion(
-      position,
-      attitude,
-    );
+    let lastFrame = performance.now();
+    const smoothSeconds = 0.12;
 
-    if (!droneEntityRef.current) {
-      droneEntityRef.current = viewer.entities.add({
-        id: "live-drone",
-        position,
-        orientation,
-        box: {
-          dimensions: new Cartesian3(1.1, 0.7, 0.22),
-          material: Color.fromCssColorString("#f59e0b").withAlpha(0.92),
-          outline: true,
-          outlineColor: Color.WHITE.withAlpha(0.8),
-        },
-        point: {
-          pixelSize: 8,
-          color: Color.fromCssColorString("#f59e0b"),
-          outlineColor: Color.WHITE,
-          outlineWidth: 2,
-          disableDepthTestDistance: 800,
-        },
-      });
-    } else {
+    const ensureEntity = (
+      position: Cartesian3,
+      orientation: ReturnType<typeof Transforms.headingPitchRollQuaternion>,
+    ) => {
+      const viewer = viewerRef.current;
+      if (!viewer || viewer.isDestroyed()) return;
+
+      if (!droneEntityRef.current) {
+        dronePositionRef.current = new ConstantPositionProperty(position);
+        droneOrientationRef.current = new ConstantProperty(orientation);
+        droneEntityRef.current = viewer.entities.add({
+          id: "live-drone",
+          position: dronePositionRef.current,
+          orientation: droneOrientationRef.current,
+          box: {
+            dimensions: new Cartesian3(1.1, 0.7, 0.22),
+            material: Color.fromCssColorString("#f59e0b").withAlpha(0.92),
+            outline: true,
+            outlineColor: Color.WHITE.withAlpha(0.8),
+          },
+          point: {
+            pixelSize: 8,
+            color: Color.fromCssColorString("#f59e0b"),
+            outlineColor: Color.WHITE,
+            outlineWidth: 2,
+            disableDepthTestDistance: 800,
+          },
+        });
+        return;
+      }
+
       droneEntityRef.current.show = true;
-      droneEntityRef.current.position = new ConstantPositionProperty(position);
-      droneEntityRef.current.orientation = new ConstantProperty(orientation);
-    }
+      dronePositionRef.current?.setValue(position);
+      droneOrientationRef.current?.setValue(orientation);
+    };
 
-    if (droneCameraMode === "fpv") {
-      viewer.camera.setView({
-        destination: Cartesian3.fromDegrees(
-          droneTelemetry.lon,
-          droneTelemetry.lat,
-          droneTelemetry.altitude_m + 0.25,
-        ),
-        orientation: {
-          heading: attitude.heading,
-          pitch: attitude.pitch,
-          roll: attitude.roll,
-        },
-      });
-    } else if (droneCameraMode === "follow") {
-      const range = 55;
-      const localOffset = new Cartesian3(
-        -Math.sin(attitude.heading) * range,
-        -Math.cos(attitude.heading) * range,
-        22,
+    const updateFollowCamera = (
+      viewer: Viewer,
+      position: Cartesian3,
+      attitude: HeadingPitchRoll,
+    ) => {
+      if (droneCameraMode === "fpv") {
+        const up = Ellipsoid.WGS84.geodeticSurfaceNormal(
+          position,
+          new Cartesian3(),
+        );
+        const eye = Cartesian3.add(
+          position,
+          Cartesian3.multiplyByScalar(up, 0.25, new Cartesian3()),
+          new Cartesian3(),
+        );
+        viewer.camera.setView({
+          destination: eye,
+          orientation: {
+            heading: attitude.heading,
+            pitch: attitude.pitch,
+            roll: attitude.roll,
+          },
+        });
+        return;
+      }
+
+      if (droneCameraMode === "follow") {
+        const range = 55;
+        const localOffset = new Cartesian3(
+          -Math.sin(attitude.heading) * range,
+          -Math.cos(attitude.heading) * range,
+          22,
+        );
+        const frame = Transforms.eastNorthUpToFixedFrame(position);
+        const destination = Matrix4.multiplyByPoint(
+          frame,
+          localOffset,
+          new Cartesian3(),
+        );
+        viewer.camera.setView({
+          destination,
+          orientation: {
+            heading: attitude.heading,
+            pitch: CesiumMath.toRadians(-22),
+            roll: 0,
+          },
+        });
+      }
+    };
+
+    const tick = (now: number) => {
+      droneRafRef.current = requestAnimationFrame(tick);
+      const viewer = viewerRef.current;
+      const target = droneTargetRef.current;
+      let surface = droneSurfaceEllipsoidRef.current;
+      if (!viewer || viewer.isDestroyed() || !target) return;
+      if (surface == null) {
+        const carto = Cartographic.fromDegrees(target.lon, target.lat);
+        surface =
+          viewer.scene.sampleHeight(carto) ??
+          target.altitude_m - target.relative_altitude_m;
+      }
+
+      const dt = Math.min((now - lastFrame) / 1000, 0.05);
+      lastFrame = now;
+      const blend = 1 - Math.exp(-dt / smoothSeconds);
+
+      const previous = droneSmoothRef.current ?? droneSmoothFromTelemetry(target);
+      const smooth = smoothDroneState(previous, target, blend);
+      droneSmoothRef.current = smooth;
+
+      const position = dronePositionFromSurface(smooth, surface);
+      const attitude = new HeadingPitchRoll(
+        CesiumMath.toRadians(smooth.yaw),
+        CesiumMath.toRadians(smooth.pitch),
+        CesiumMath.toRadians(smooth.roll),
       );
-      const frame = Transforms.eastNorthUpToFixedFrame(position);
-      const destination = Matrix4.multiplyByPoint(
-        frame,
-        localOffset,
-        new Cartesian3(),
+      const orientation = Transforms.headingPitchRollQuaternion(
+        position,
+        attitude,
       );
-      viewer.camera.setView({
-        destination,
-        orientation: {
-          heading: attitude.heading,
-          pitch: CesiumMath.toRadians(-22),
-          roll: 0,
-        },
-      });
-    }
-    viewer.scene.requestRender();
-  }, [droneTelemetry, droneCameraMode, layers.drone]);
+
+      ensureEntity(position, orientation);
+      if (droneCameraMode === "fpv" || droneCameraMode === "follow") {
+        updateFollowCamera(viewer, position, attitude);
+      }
+      viewer.scene.requestRender();
+    };
+
+    droneRafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (droneRafRef.current != null) {
+        cancelAnimationFrame(droneRafRef.current);
+        droneRafRef.current = null;
+      }
+    };
+  }, [layers.drone, droneCameraMode, photoActive]);
 
   // Camera commands from toolbar / layer panel
   useEffect(() => {

@@ -608,6 +608,10 @@ body,
   color: var(--ok);
 }
 
+.status-bar .off {
+  color: var(--muted);
+}
+
 .status-bar .bad {
   color: var(--bad);
 }

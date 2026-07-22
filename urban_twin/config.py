@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     ws_bridge_port: int = 8001
 
     # PX4 / MAVSDK drone bridge. The fixed home anchors PX4 local NED to WGS84.
-    drone_system_address: str = "udp://:14540"
+    drone_system_address: str = "udpin://0.0.0.0:14540"
     drone_id: str = "px4-sitl-1"
     drone_home_lat: float = 51.053
     drone_home_lon: float = -114.081

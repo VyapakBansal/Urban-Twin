@@ -15,7 +15,15 @@ PX4_HOME_LAT="${PX4_HOME_LAT:-51.053}"
 PX4_HOME_LON="${PX4_HOME_LON:--114.081}"
 PX4_HOME_ALT="${PX4_HOME_ALT:-1045.0}"
 LOG_DIR="${URBAN_TWIN_LOG_DIR:-$ROOT/.run/logs}"
-PID_FILE="${URBAN_TWIN_PID_DIR:-$ROOT/.run/pids}/px4-sitl.pid"
+PID_DIR="${URBAN_TWIN_PID_DIR:-$ROOT/.run/pids}"
+# make/px4 runs from PX4_DIR — anchor repo-relative paths before that cd
+if [[ "$LOG_DIR" != /* ]]; then
+  LOG_DIR="$ROOT/$LOG_DIR"
+fi
+if [[ "$PID_DIR" != /* ]]; then
+  PID_DIR="$ROOT/$PID_DIR"
+fi
+PID_FILE="$PID_DIR/px4-sitl.pid"
 BACKGROUND=0
 STOP=0
 
@@ -46,6 +54,39 @@ EOF
 done
 
 mkdir -p "$LOG_DIR" "$(dirname "$PID_FILE")"
+RELAY_PID_FILE="$PID_DIR/mavlink-relay.pid"
+
+start_mavlink_relay() {
+  if [[ "${URBAN_TWIN_MAVLINK_RELAY:-1}" == "0" ]]; then
+    return 0
+  fi
+  if ! grep -qi microsoft /proc/version 2>/dev/null; then
+    return 0
+  fi
+  if [[ -f "$RELAY_PID_FILE" ]]; then
+    local relay_pid
+    relay_pid="$(cat "$RELAY_PID_FILE")"
+    if kill -0 "$relay_pid" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$RELAY_PID_FILE"
+  fi
+  nohup python3 "$ROOT/scripts/mavlink-relay.py" >>"$LOG_DIR/mavlink-relay.log" 2>&1 &
+  echo $! >"$RELAY_PID_FILE"
+  echo "  · mavlink relay pid $(cat "$RELAY_PID_FILE") (WSL -> Windows UDP 14540)"
+}
+
+stop_mavlink_relay() {
+  if [[ -f "$RELAY_PID_FILE" ]]; then
+    local relay_pid
+    relay_pid="$(cat "$RELAY_PID_FILE")"
+    if kill -0 "$relay_pid" 2>/dev/null; then
+      kill "$relay_pid" 2>/dev/null || true
+    fi
+    rm -f "$RELAY_PID_FILE"
+  fi
+  pkill -f "scripts/mavlink-relay.py" 2>/dev/null || true
+}
 
 stop_sim() {
   if [[ -f "$PID_FILE" ]]; then
@@ -61,6 +102,7 @@ stop_sim() {
   fi
   pkill -f "px4_sitl_default/bin/px4" 2>/dev/null || true
   pkill -f "gz sim" 2>/dev/null || true
+  stop_mavlink_relay
 }
 
 if [[ "$STOP" -eq 1 ]]; then
@@ -71,6 +113,7 @@ fi
 
 if pgrep -f "px4_sitl_default/bin/px4" >/dev/null 2>&1; then
   echo "PX4 SITL already running — skipping start"
+  start_mavlink_relay
   exit 0
 fi
 
@@ -91,7 +134,7 @@ echo "    home:  $PX4_HOME_LAT, $PX4_HOME_LON @ ${PX4_HOME_ALT}m"
 
 if [[ "$BACKGROUND" -eq 1 ]]; then
   stop_sim
-  mkdir -p "$(dirname "$PID_FILE")" "$LOG_DIR"   # <--- Add this line here
+  start_mavlink_relay
   nohup make px4_sitl "$PX4_SITL_TARGET" >"$LOG_DIR/px4-sitl.log" 2>&1 &
   echo $! >"$PID_FILE"
   echo "  · started in background (pid $(cat "$PID_FILE"))"

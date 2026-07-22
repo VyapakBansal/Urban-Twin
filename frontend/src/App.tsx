@@ -191,7 +191,9 @@ export default function App() {
         label: "Drone",
         meta: drone.telemetry
           ? `${drone.telemetry.relative_altitude_m.toFixed(0)} m`
-          : drone.status,
+          : drone.status === "open"
+            ? "waiting for PX4"
+            : drone.status,
       },
       { key: "pathways", label: "Pathways", meta: String(pathways.length) },
       { key: "amenities", label: "Places", meta: String(amenities.length) },
@@ -320,6 +322,7 @@ export default function App() {
       <StatusBar
         apiOk={bootstrap.apiOk}
         wsStatus={sensors.wsStatus}
+        wsEnabled={wsEnabled}
         buildingCount={
           bootstrap.counts?.buildings ?? bootstrap.buildings.length
         }
@@ -329,6 +332,7 @@ export default function App() {
         }
         flash={sensors.flash}
         droneStatus={drone.status}
+        droneEnabled={layers.drone}
       />
     </div>
   );
